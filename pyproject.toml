@@ -2,8 +2,18 @@
 name = "claim-verifier"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = []
+# Runtime deps for Vercel's Python/uv installer (must not be empty).
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "motor>=3.5",
+  "pydantic>=2.8",
+  "pydantic-ai-slim[openai]>=1.0",
+  "pydantic-settings>=2.4",
+  "httpx>=0.27",
+  "fastmcp>=2.10",
+  "python-dotenv>=1.0",
+]
 
 [tool.vercel]
-# ASGI entry for the Python runtime (see also api/index.py).
 entrypoint = "api/index.py"
