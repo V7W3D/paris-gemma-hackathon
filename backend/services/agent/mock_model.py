@@ -7,11 +7,12 @@ from typing import Any, Callable
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from backend.services.agent.prompts import CONTEXT_CLOSE, CONTEXT_OPEN
+from backend.services.agent.prompts import CONTEXT_CLOSE, CONTEXT_OPEN, DIRECT_QUESTION_HEADER
 
 _CONTEXT_RE = re.compile(
     re.escape(CONTEXT_OPEN) + r"\s*(.*?)\s*" + re.escape(CONTEXT_CLOSE), re.DOTALL
 )
+_QUESTION_RE = re.compile(re.escape(DIRECT_QUESTION_HEADER) + r"\n(.*?)\n\n", re.DOTALL)
 
 MOCK_NOTE = "mock inference — no Brev endpoint configured"
 
@@ -153,6 +154,18 @@ def _compaction(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
     }
 
 
+def _direct(_context: dict[str, Any], prompt: str) -> dict[str, Any]:
+    match = _QUESTION_RE.search(prompt)
+    question = (match.group(1) if match else "").strip()
+    return {
+        "thought": "answering without the verifier",
+        "answer": (
+            f"Answering straight from the model ({MOCK_NOTE}), with nothing checked against the "
+            f"corpus: {question}"
+        ).strip(),
+    }
+
+
 _HANDLERS: dict[str, Callable[[dict[str, Any], str], dict[str, Any]]] = {
     "DecomposeOutput": _decompose,
     "PlanOutput": _plan,
@@ -160,4 +173,5 @@ _HANDLERS: dict[str, Callable[[dict[str, Any], str], dict[str, Any]]] = {
     "AssessOutput": _assess,
     "VerdictOutput": _verdict,
     "CompactionOutput": _compaction,
+    "DirectAnswerOutput": _direct,
 }

@@ -30,11 +30,13 @@ def normalise_base_url(base_url: str) -> str:
 
 
 def build_model(settings: Settings) -> Model:
-    """Point Pydantic AI at the Brev deployment, or at the offline mock model."""
+    """Point Pydantic AI at the OpenAI-compatible endpoint, or the offline mock."""
     if settings.llm_is_mocked:
         from backend.services.agent.mock_model import build_mock_model
 
-        logger.warning("BREV_BASE_URL not set (or MOCK_LLM=true): using the offline mock model")
+        logger.warning(
+            "VLLM_BASE_URL / BREV_BASE_URL not set (or MOCK_LLM=true): using the offline mock model"
+        )
         return build_mock_model()
 
     from pydantic_ai.models.openai import OpenAIChatModel

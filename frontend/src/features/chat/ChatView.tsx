@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { Composer } from '@/features/chat/Composer'
 import { MessageList } from '@/features/chat/MessageList'
+import { ModeToggle } from '@/features/chat/ModeToggle'
 import type { LiveRun } from '@/hooks/useChat'
 import type { Message } from '@/lib/types'
 
@@ -17,11 +18,24 @@ interface Props {
   busy: boolean
   error: string | null
   disabled: boolean
+  verifierEnabled: boolean
   onSend: (content: string) => void
   onStop: () => void
+  onVerifierChange: (enabled: boolean) => void
 }
 
-export function ChatView({ title, messages, run, busy, error, disabled, onSend, onStop }: Props) {
+export function ChatView({
+  title,
+  messages,
+  run,
+  busy,
+  error,
+  disabled,
+  verifierEnabled,
+  onSend,
+  onStop,
+  onVerifierChange,
+}: Props) {
   const body = useRef<HTMLDivElement>(null)
   const empty = messages.length === 0 && !busy
 
@@ -29,15 +43,17 @@ export function ChatView({ title, messages, run, busy, error, disabled, onSend, 
     <main className="chat">
       <header className="chat__header">
         <h1>{title}</h1>
+        <ModeToggle enabled={verifierEnabled} disabled={busy} onChange={onVerifierChange} />
       </header>
 
       <div className="chat__body" ref={body}>
         {empty ? (
           <div className="welcome">
-            <h2>What should I verify?</h2>
+            <h2>{verifierEnabled ? 'What should I verify?' : 'What do you want to ask?'}</h2>
             <p>
-              Every claim is decomposed, researched with live sources, and judged one decision point
-              at a time.
+              {verifierEnabled
+                ? 'Every claim is decomposed, researched with live sources, and judged one decision point at a time.'
+                : 'The verifier is off, so the model answers on its own — no claims, no sources, no verdict.'}
             </p>
             <div className="examples">
               {EXAMPLES.map((example) => (
@@ -54,7 +70,13 @@ export function ChatView({ title, messages, run, busy, error, disabled, onSend, 
 
       {error && <div className="banner">{error}</div>}
 
-      <Composer busy={busy} disabled={disabled} onSend={onSend} onStop={onStop} />
+      <Composer
+        busy={busy}
+        disabled={disabled}
+        verifierEnabled={verifierEnabled}
+        onSend={onSend}
+        onStop={onStop}
+      />
     </main>
   )
 }

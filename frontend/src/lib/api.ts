@@ -5,7 +5,9 @@ import type {
   SystemStatus,
 } from './types'
 
-const BASE = '/api'
+/** Empty in local/dev (Vite proxies /api). Set VITE_API_BASE for a split deploy. */
+const API_ROOT = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
+const BASE = `${API_ROOT}/api`
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
@@ -34,13 +36,14 @@ export const api = {
 export async function streamMessage(
   chatId: string,
   content: string,
+  useVerifier: boolean,
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(`${BASE}/chats/${chatId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, use_verifier: useVerifier }),
     signal,
   })
   if (!response.ok || !response.body) {

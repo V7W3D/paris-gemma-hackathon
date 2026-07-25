@@ -1,5 +1,8 @@
 export type Stage = 'decompose' | 'plan' | 'gather' | 'assess' | 'verdict'
 
+/** Verified runs the five decision points; direct is one plain model answer. */
+export type ChatMode = 'verified' | 'direct'
+
 export type ClaimStatus = 'pending' | 'supported' | 'refuted' | 'insufficient'
 
 export type VerdictLabel = 'true' | 'false' | 'mixed' | 'unverified'
@@ -86,7 +89,13 @@ export interface SystemStatus {
 }
 
 export type StreamEvent =
-  | { type: 'turn_started'; turn_id: string; conversation_title: string; message: Message }
+  | {
+      type: 'turn_started'
+      turn_id: string
+      conversation_title: string
+      mode: ChatMode
+      message: Message
+    }
   | { type: 'stage'; stage: Stage; status: 'started' | 'completed'; summary?: string; detail?: Record<string, unknown> }
   | { type: 'claims'; claims: Claim[] }
   | { type: 'retrieval'; stage: Stage; query: string; ok: boolean; error: string; evidence: Evidence[] }

@@ -73,6 +73,23 @@ def test_non_streaming_turn_returns_the_message_and_events(client: TestClient):
     assert not any(e["type"] == "token" for e in payload["events"])
 
 
+def test_a_turn_with_the_verifier_off_returns_a_plain_answer(client: TestClient):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    payload = client.post(
+        f"/api/chats/{chat_id}/messages",
+        params={"stream": "false"},
+        json={
+            "content": "The Eiffel Tower is 330 metres tall including its antennas.",
+            "use_verifier": False,
+        },
+    ).json()
+
+    assert payload["message"]["verdict"] is None
+    assert payload["message"]["trace"] == []
+    assert {e["type"] for e in payload["events"]} == {"turn_started", "message", "done"}
+    assert client.get(f"/api/chats/{chat_id}/contexts").json() == []
+
+
 def test_streaming_turn_emits_sse_frames(client: TestClient):
     chat_id = client.post("/api/chats", json={}).json()["id"]
     with client.stream(

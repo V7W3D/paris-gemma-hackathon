@@ -68,3 +68,7 @@ class RenameConversationRequest(BaseModel):
 
 class VerifyRequest(BaseModel):
     content: str
+    use_verifier: bool = Field(
+        default=True,
+        description="False answers in one plain model call, with no context, sources or verdict.",
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any
 
 import pytest
@@ -32,7 +33,10 @@ HITS = [
 
 
 def _live(**overrides) -> Settings:
-    return Settings(**{"alien_mcp_url": "http://alien.test/mcp", "mock_search": False, **overrides})
+    return Settings(
+        _env_file=None,
+        **{"alien_mcp_url": "http://alien.test/mcp", "mock_search": False, **overrides},
+    )
 
 
 def _server(hits: Any = None, *, fail: bool = False) -> FastMCP:
@@ -116,6 +120,86 @@ async def test_the_limit_caps_the_passages_returned():
     assert len(await retriever.search("height of the tower", limit=1)) == 1
 
 
+def _datacluster_server() -> FastMCP:
+    """Shaped like Alien's data cluster: a JSON string inside an envelope.
+
+    The hits carry ids rather than a title or a URL, and the names live behind
+    two other tools.
+    """
+    server = FastMCP("alien-datacluster")
+
+    def envelope(data: dict[str, Any]) -> str:
+        return json.dumps({"success": True, "data": data})
+
+    @server.tool
+    async def datacluster_list_datasets(limit: int = 50) -> str:
+        """List datasets."""
+        return envelope({"datasets": [{"id": 22, "name": "Neuroscience"}]})
+
+    @server.tool
+    async def datacluster_vector_search_chunks(query: str, limit: int = 10) -> str:
+        """Search document passages semantically."""
+        return envelope(
+            {
+                "results": [
+                    {
+                        "id": "3bb02134",
+                        "score": 0.71,
+                        "chunk_text": "Base editing corrected the I114T variant in patient iPSCs.",
+                        "metadata": {"dataset_id": 22, "entry_id": 228961, "chunk_index": 84},
+                    }
+                ]
+            }
+        )
+
+    @server.tool
+    async def datacluster_get_entry_documents(entry_id: int) -> str:
+        """Name an entry and list its files."""
+        return envelope({"entry_id": entry_id, "name": "A streamlined CRISPR workflow"})
+
+    return server
+
+
+async def test_the_data_cluster_envelope_is_unwrapped_into_passages():
+    retriever = AlienRetriever(_live(), client=Client(_datacluster_server()))
+    await retriever.connect()
+
+    chunks = await retriever.search("base editing in iPSCs")
+
+    assert len(chunks) == 1
+    assert chunks[0].text.startswith("Base editing corrected")
+    assert chunks[0].score == 0.71
+
+
+async def test_hits_are_named_from_the_entry_and_dataset_tools():
+    retriever = AlienRetriever(_live(), client=Client(_datacluster_server()))
+    await retriever.connect()
+
+    chunk = (await retriever.search("base editing in iPSCs"))[0]
+
+    assert chunk.title == "A streamlined CRISPR workflow"
+    assert chunk.source == "Neuroscience"
+
+
+async def test_an_entry_is_only_named_once():
+    server = _datacluster_server()
+    calls: list[int] = []
+
+    @server.tool
+    async def datacluster_get_entry_documents(entry_id: int) -> str:  # noqa: F811
+        """Name an entry and list its files."""
+        calls.append(entry_id)
+        return json.dumps({"success": True, "data": {"name": "A streamlined CRISPR workflow"}})
+
+    retriever = AlienRetriever(_live(), client=Client(server))
+    await retriever.connect()
+
+    await retriever.search("base editing")
+    await retriever.search("base editing once more")
+
+    assert calls == [228961]
+
+
 async def test_a_tool_answering_with_plain_text_still_yields_a_passage():
     server = FastMCP("alien-text")
 
@@ -162,6 +246,7 @@ async def test_an_empty_query_is_not_searched(retriever: AlienRetriever):
 
 
 def test_retrieval_is_mocked_until_an_mcp_server_is_configured():
-    assert Settings().search_is_mocked is True
+    # _env_file=None: the answer must not depend on the developer's own .env.
+    assert Settings(_env_file=None).search_is_mocked is True
     assert _live().search_is_mocked is False
     assert _live(mock_search=True).search_is_mocked is True

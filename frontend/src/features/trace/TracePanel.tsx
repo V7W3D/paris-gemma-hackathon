@@ -67,9 +67,13 @@ export function TracePanel({ steps, activeStage = null, sources = [], defaultOpe
           <ul>
             {sources.map((source) => (
               <li key={source.id}>
-                <a href={source.url} target="_blank" rel="noreferrer">
-                  {source.title || source.url}
-                </a>
+                {source.url ? (
+                  <a href={source.url} target="_blank" rel="noreferrer">
+                    {source.title || source.url}
+                  </a>
+                ) : (
+                  <span className="trace__source">{source.title || source.source || 'Passage'}</span>
+                )}
                 <span className={`stance stance--${source.stance}`}>{source.stance}</span>
                 {source.snippet && <p>{source.snippet.slice(0, 220)}</p>}
               </li>

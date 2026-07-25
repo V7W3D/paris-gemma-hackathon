@@ -12,9 +12,10 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [status, setStatus] = useState<SystemStatus | null>(null)
+  const [verifierEnabled, setVerifierEnabled] = useState(true)
   const creating = useRef(false)
 
-  const { messages, run, busy, error, send, stop } = useChat(activeId, refresh)
+  const { messages, run, busy, error, send, stop } = useChat(activeId, verifierEnabled, refresh)
 
   useEffect(() => {
     api
@@ -76,8 +77,10 @@ export default function App() {
         busy={busy}
         error={error}
         disabled={!activeId}
+        verifierEnabled={verifierEnabled}
         onSend={(content) => void send(content)}
         onStop={stop}
+        onVerifierChange={setVerifierEnabled}
       />
     </div>
   )

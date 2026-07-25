@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -14,11 +15,22 @@ class Settings(BaseSettings):
         env_file=(ROOT_DIR / ".env", BACKEND_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
-    brev_base_url: str = ""
-    brev_api_key: str = ""
-    brev_model: str = "google/gemma-3-27b-it"
+    # OpenAI-compatible inference (vLLM, Brev, …). VLLM_* wins when both are set.
+    brev_base_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("VLLM_BASE_URL", "BREV_BASE_URL"),
+    )
+    brev_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("VLLM_API_KEY", "BREV_API_KEY"),
+    )
+    brev_model: str = Field(
+        default="google/gemma-3-27b-it",
+        validation_alias=AliasChoices("VLLM_MODEL", "BREV_MODEL"),
+    )
     llm_timeout_seconds: float = 120.0
     llm_max_retries: int = 2
 
@@ -28,6 +40,8 @@ class Settings(BaseSettings):
 
     alien_mcp_url: str = ""
     alien_mcp_token: str = ""
+    alien_mcp_oauth: bool = False
+    alien_oauth_callback_port: int = 8765
     alien_mcp_search_tool: str = ""
     alien_dataset_ids: list[int] = []
     alien_search_limit: int = 8
@@ -45,6 +59,11 @@ class Settings(BaseSettings):
     @property
     def memory_path(self) -> Path:
         return BACKEND_DIR / "memory" / "verifier_memory.md"
+
+    @property
+    def alien_oauth_cache(self) -> Path:
+        """Where the OAuth tokens live, so the browser login happens once."""
+        return BACKEND_DIR / ".oauth"
 
     @property
     def llm_is_mocked(self) -> bool:

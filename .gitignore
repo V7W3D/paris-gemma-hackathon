@@ -5,4 +5,7 @@ __pycache__/
 .pytest_cache/
 .env
 .env.local
+backend/.oauth/
+public/
+.vercel/
 .DS_Store

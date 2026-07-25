@@ -29,14 +29,16 @@ async def post_message(
     stream: bool = Query(default=True, description="Stream decision points as SSE"),
     container: AppContainer = Depends(get_container),
 ) -> Any:
-    """Run one verification turn: the five decision points over both agents."""
+    """Run one turn: the five decision points over both agents, or a direct answer."""
     content = payload.content.strip()
     if not content:
         raise HTTPException(status_code=422, detail="message content is empty")
     if await container.store.get_conversation(chat_id) is None:
         raise HTTPException(status_code=404, detail="conversation not found")
 
-    events = container.workflow.run(conversation_id=chat_id, content=content)
+    events = container.workflow.run(
+        conversation_id=chat_id, content=content, use_verifier=payload.use_verifier
+    )
 
     if not stream:
         collected: list[dict[str, Any]] = []

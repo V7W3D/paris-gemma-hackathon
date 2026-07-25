@@ -29,8 +29,12 @@ const emptyRun: LiveRun = {
   pending: [],
 }
 
-/** Loads one conversation and runs verification turns against it. */
-export function useChat(conversationId: string | null, onTurnComplete?: () => void) {
+/** Loads one conversation and runs turns against it, verified or direct. */
+export function useChat(
+  conversationId: string | null,
+  useVerifier: boolean,
+  onTurnComplete?: () => void,
+) {
   const [messages, setMessages] = useState<Message[]>([])
   const [run, setRun] = useState<LiveRun>(emptyRun)
   const [busy, setBusy] = useState(false)
@@ -140,7 +144,7 @@ export function useChat(conversationId: string | null, onTurnComplete?: () => vo
       }
 
       try {
-        await streamMessage(conversationId, content, handle, controller.signal)
+        await streamMessage(conversationId, content, useVerifier, handle, controller.signal)
       } catch (cause) {
         if (!controller.signal.aborted) {
           setError(cause instanceof Error ? cause.message : 'verification failed')
@@ -150,7 +154,7 @@ export function useChat(conversationId: string | null, onTurnComplete?: () => vo
         abortRef.current = null
       }
     },
-    [busy, conversationId, onTurnComplete],
+    [busy, conversationId, onTurnComplete, useVerifier],
   )
 
   return { messages, run, busy, error, send, stop }

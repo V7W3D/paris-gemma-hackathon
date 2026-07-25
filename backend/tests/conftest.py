@@ -5,6 +5,7 @@ import pytest
 from backend.config import Settings
 from backend.db.store import MemoryStore
 from backend.services.agent.context_agent import ContextAgent
+from backend.services.agent.direct_agent import DirectAgent
 from backend.services.agent.llm_client import Inference
 from backend.services.agent.verifier_agent import VerifierAgent
 from backend.services.retrieval.alien_client import AlienRetriever
@@ -13,7 +14,10 @@ from backend.services.workflow.claim_verification import ClaimVerificationWorkfl
 
 @pytest.fixture
 def settings() -> Settings:
+    # _env_file=None keeps the suite hermetic: a filled-in backend/.env, with a
+    # live corpus and a live model behind it, must not change what is tested.
     return Settings(
+        _env_file=None,
         mock_llm=True,
         mock_search=True,
         brev_base_url="",
@@ -43,6 +47,11 @@ def verifier(inference: Inference, settings: Settings) -> VerifierAgent:
 
 
 @pytest.fixture
+def direct_agent(inference: Inference, settings: Settings) -> DirectAgent:
+    return DirectAgent(inference, settings)
+
+
+@pytest.fixture
 def retriever(settings: Settings) -> AlienRetriever:
     return AlienRetriever(settings)
 
@@ -51,6 +60,7 @@ def retriever(settings: Settings) -> AlienRetriever:
 def workflow(
     verifier: VerifierAgent,
     context_agent: ContextAgent,
+    direct_agent: DirectAgent,
     retriever: AlienRetriever,
     store: MemoryStore,
     settings: Settings,
@@ -58,6 +68,7 @@ def workflow(
     return ClaimVerificationWorkflow(
         verifier=verifier,
         context_agent=context_agent,
+        direct_agent=direct_agent,
         retriever=retriever,
         store=store,
         settings=settings,

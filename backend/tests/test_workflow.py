@@ -15,8 +15,19 @@ pytestmark = pytest.mark.asyncio
 CLAIM = "The Eiffel Tower is 330 metres tall including its antennas."
 
 
-async def _run(workflow: ClaimVerificationWorkflow, chat_id: str, content: str) -> list[dict]:
-    return [event async for event in workflow.run(conversation_id=chat_id, content=content)]
+async def _run(
+    workflow: ClaimVerificationWorkflow,
+    chat_id: str,
+    content: str,
+    *,
+    use_verifier: bool = True,
+) -> list[dict]:
+    return [
+        event
+        async for event in workflow.run(
+            conversation_id=chat_id, content=content, use_verifier=use_verifier
+        )
+    ]
 
 
 async def test_a_claim_walks_every_decision_point(
@@ -124,6 +135,59 @@ async def test_a_message_without_a_claim_answers_directly(
     saved = await store.get_conversation(conversation.id)
     assert saved.messages[-1].verdict is None
     assert "factual statement" in saved.messages[-1].content
+
+
+async def test_with_the_verifier_off_the_answer_skips_the_pipeline(
+    workflow: ClaimVerificationWorkflow, store: MemoryStore
+):
+    conversation = await store.create_conversation()
+    events = await _run(workflow, conversation.id, CLAIM, use_verifier=False)
+
+    assert events[0]["mode"] == "direct"
+    assert not [e for e in events if e["type"] in {"stage", "claims", "retrieval"}]
+    assert any(e["type"] == "token" for e in events)
+    assert events[-1]["type"] == "done"
+
+    saved = await store.get_conversation(conversation.id)
+    answer = saved.messages[-1]
+    assert answer.role.value == "assistant"
+    assert answer.verdict is None
+    assert answer.trace == []
+    assert await store.list_contexts(conversation.id) == []
+
+
+async def test_the_verifier_is_never_called_when_it_is_off(
+    workflow: ClaimVerificationWorkflow, store: MemoryStore, monkeypatch: pytest.MonkeyPatch
+):
+    conversation = await store.create_conversation()
+
+    async def boom(**_kwargs):
+        raise AssertionError("the verifier ran with the toggle off")
+
+    monkeypatch.setattr(workflow._verifier, "run", boom)
+    events = await _run(workflow, conversation.id, CLAIM, use_verifier=False)
+
+    assert not [e for e in events if e["type"] == "error"]
+
+
+async def test_a_direct_turn_carries_the_earlier_conversation(
+    workflow: ClaimVerificationWorkflow, store: MemoryStore, monkeypatch: pytest.MonkeyPatch
+):
+    conversation = await store.create_conversation()
+    await _run(workflow, conversation.id, CLAIM, use_verifier=False)
+
+    seen: dict[str, str] = {}
+    original = workflow._direct.run
+
+    async def capture(*, question: str, history: str = "") -> str:
+        seen["history"] = history
+        return await original(question=question, history=history)
+
+    monkeypatch.setattr(workflow._direct, "run", capture)
+    await _run(workflow, conversation.id, "And how tall is it without them?", use_verifier=False)
+
+    assert CLAIM in seen["history"]
+    assert "And how tall is it without them?" not in seen["history"]
 
 
 async def test_an_unknown_conversation_is_reported(workflow: ClaimVerificationWorkflow):

@@ -24,6 +24,17 @@ CONTEXT_ROLE = """You are the Context agent of a claim-verification system.
 You do not answer the user and you do not decide anything about the claims. You keep the
 running context of the verification compact, factual and useful to the Verifier."""
 
+DIRECT_ROLE = """You are a helpful assistant answering the user directly.
+The verification pipeline is switched off for this turn: there is no context object, no retrieved
+evidence and no verdict, so answer from what you already know.
+
+Hard rules:
+- Never invent sources, titles, quotes or dates, and never imply anything was checked.
+- Say plainly when you are unsure or when a claim would need a source to settle."""
+
+DIRECT_HISTORY_HEADER = "Earlier in this conversation:"
+DIRECT_QUESTION_HEADER = "User message:"
+
 STAGE_INSTRUCTIONS: dict[Stage, str] = {
     Stage.DECOMPOSE: """Split the user's message into atomic, independently checkable factual claims.
 Keep at most {max_claims} claims, drop rhetoric and opinion, and resolve pronouns using the running summary.
@@ -53,6 +64,9 @@ COMPACTION_INSTRUCTION = """Rewrite the running summary of this verification so 
 Keep it under 120 words: what was asked, which claims are settled, what the evidence establishes.
 Facts only, no speculation, no citation markers."""
 
+DIRECT_INSTRUCTION = """Answer the user's message in markdown, in a few short paragraphs at most.
+Do not decompose it into claims, do not cite anything, and do not state a verdict."""
+
 
 def render_context_block(view: dict[str, Any]) -> str:
     return f"{CONTEXT_OPEN}\n{json.dumps(view, ensure_ascii=False, indent=2)}\n{CONTEXT_CLOSE}"
@@ -74,6 +88,15 @@ def build_stage_prompt(
             f"TASK\n{STAGE_INSTRUCTIONS[stage].format(max_claims=max_claims)}",
         ]
     )
+
+
+def build_direct_prompt(*, question: str, history: str = "") -> str:
+    blocks = [DIRECT_ROLE]
+    if history:
+        blocks.append(f"{DIRECT_HISTORY_HEADER}\n{history}")
+    blocks.append(f"{DIRECT_QUESTION_HEADER}\n{question}")
+    blocks.append(f"TASK\n{DIRECT_INSTRUCTION}")
+    return "\n\n".join(blocks)
 
 
 def build_compaction_prompt(*, stage: Stage, context_view: dict[str, Any]) -> str:

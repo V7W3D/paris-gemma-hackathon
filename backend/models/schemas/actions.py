@@ -130,6 +130,12 @@ class CompactionOutput(StageOutput):
     summary: str = Field(default="", description="Under 120 words, facts only.")
 
 
+class DirectAnswerOutput(StageOutput):
+    """The answer given when the verifier is switched off."""
+
+    answer: str = Field(default="", description="Markdown answer to the user, no citations.")
+
+
 STAGE_OUTPUTS: dict[Stage, type[StageOutput]] = {
     Stage.DECOMPOSE: DecomposeOutput,
     Stage.PLAN: PlanOutput,

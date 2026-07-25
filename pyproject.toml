@@ -1,0 +1,9 @@
+[project]
+name = "claim-verifier"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.vercel]
+# ASGI entry for the Python runtime (see also api/index.py).
+entrypoint = "api/index.py"

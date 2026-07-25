@@ -1,0 +1,2 @@
+# Vercel / root install entry — keeps the Python runtime and local venv in sync.
+-r backend/requirements.txt

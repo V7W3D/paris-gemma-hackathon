@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 interface Props {
   busy: boolean
   disabled: boolean
+  verifierEnabled: boolean
   onSend: (content: string) => void
   onStop: () => void
 }
 
-export function Composer({ busy, disabled, onSend, onStop }: Props) {
+export function Composer({ busy, disabled, verifierEnabled, onSend, onStop }: Props) {
   const [value, setValue] = useState('')
   const textarea = useRef<HTMLTextAreaElement>(null)
 
@@ -33,7 +34,7 @@ export function Composer({ busy, disabled, onSend, onStop }: Props) {
           rows={1}
           value={value}
           disabled={disabled}
-          placeholder="Paste a claim to verify…"
+          placeholder={verifierEnabled ? 'Paste a claim to verify…' : 'Ask the model anything…'}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -51,14 +52,17 @@ export function Composer({ busy, disabled, onSend, onStop }: Props) {
             className="send"
             onClick={submit}
             disabled={!value.trim() || disabled}
-            title="Verify"
+            title={verifierEnabled ? 'Verify' : 'Send'}
           >
             <span className="arrow" />
           </button>
         )}
       </div>
       <p className="composer__hint">
-        Two agents, five decision points, sources cited. Enter to send, Shift + Enter for a new line.
+        {verifierEnabled
+          ? 'Two agents, five decision points, sources cited.'
+          : 'Verifier off — the model answers unchecked, with no sources.'}{' '}
+        Enter to send, Shift + Enter for a new line.
       </p>
     </div>
   )

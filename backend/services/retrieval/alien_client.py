@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import string
 from typing import Any
 
 from backend.config import Settings
@@ -14,6 +16,9 @@ logger = logging.getLogger(__name__)
 # here is hardcoded to one deployment: the search tool and its arguments are
 # resolved against whatever the server reports at startup. Set
 # ALIEN_MCP_SEARCH_TOOL to pin a specific tool.
+OAUTH_CLIENT_NAME = "Claim Verifier"
+OAUTH_CACHE_CHARACTERS = string.ascii_letters + string.digits + "-_."
+
 QUERY_ARGS = ("query", "q", "question", "text", "search", "prompt")
 LIMIT_ARGS = ("limit", "top_k", "k", "num_results", "max_results")
 DATASET_ARGS = ("dataset_ids", "datasets", "dataset_id")
@@ -22,7 +27,27 @@ TITLE_FIELDS = ("title", "name", "entry_name", "document", "filename")
 TEXT_FIELDS = ("text", "chunk_text", "content", "snippet", "passage", "excerpt", "body")
 URL_FIELDS = ("url", "link", "uri", "download_url", "source_url")
 SOURCE_FIELDS = ("source", "dataset_name", "dataset", "collection")
-RESULT_KEYS = ("results", "hits", "chunks", "matches", "items", "data")
+ENTRY_ID_FIELDS = ("entry_id", "entryId", "document_id", "doc_id")
+DATASET_ID_FIELDS = ("dataset_id", "datasetId", "collection_id")
+
+# Payloads arrive wrapped, sometimes several layers deep and sometimes as a
+# JSON string inside the envelope, so the list of hits is unwrapped by name.
+# The specific names come first: "data" and "result" are containers on the way
+# down to them.
+RESULT_KEYS = (
+    "results",
+    "hits",
+    "chunks",
+    "matches",
+    "items",
+    "datasets",
+    "entries",
+    "data",
+    "result",
+    "response",
+    "output",
+)
+MAX_UNWRAP_DEPTH = 6
 
 
 class RetrievalError(RuntimeError):
@@ -48,6 +73,8 @@ class AlienRetriever:
         self._client = client
         self._tools: list[Any] = []
         self._search_tool: Any = None
+        self._datasets: dict[str, str] = {}
+        self._entry_titles: dict[str, str] = {}
 
     @property
     def mocked(self) -> bool:
@@ -69,6 +96,12 @@ class AlienRetriever:
     def dataset_ids(self) -> list[int]:
         return list(self._settings.alien_dataset_ids)
 
+    @property
+    def auth_mode(self) -> str:
+        if self._settings.alien_mcp_token:
+            return "token"
+        return "oauth" if self._settings.alien_mcp_oauth else "none"
+
     # ----------------------------------------------------------------- client
 
     def _ensure_client(self) -> Any:
@@ -77,10 +110,47 @@ class AlienRetriever:
 
             self._client = Client(
                 self._settings.alien_mcp_url,
-                auth=self._settings.alien_mcp_token or None,
+                auth=self._auth(),
                 timeout=self._settings.alien_mcp_timeout_seconds,
             )
         return self._client
+
+    def _auth(self) -> Any:
+        """A static bearer token when one is configured, otherwise the OAuth login.
+
+        The public Alien servers put OAuth in front of the corpus, so the first
+        connection opens a browser and the tokens are cached on disk from then
+        on. `python -m backend.scripts.alien_login` gets that out of the way
+        before the app ever starts.
+        """
+        if self._settings.alien_mcp_token:
+            return self._settings.alien_mcp_token
+        if not self._settings.alien_mcp_oauth:
+            return None
+
+        from fastmcp.client.auth import OAuth
+        from key_value.aio._utils.sanitization import HybridSanitizationStrategy
+        from key_value.aio.stores.filetree import FileTreeStore
+
+        cache = self._settings.alien_oauth_cache
+        cache.mkdir(parents=True, exist_ok=True)
+        # The cache keys are the server URL, and the store turns keys into
+        # paths, so anything that is not a plain filename has to go.
+        flat_names = HybridSanitizationStrategy(
+            max_length=120, allowed_characters=OAUTH_CACHE_CHARACTERS
+        )
+        return OAuth(
+            mcp_url=self._settings.alien_mcp_url,
+            client_name=OAUTH_CLIENT_NAME,
+            # A fixed port keeps the redirect URI stable, so the client
+            # registration cached on disk stays valid across restarts.
+            callback_port=self._settings.alien_oauth_callback_port,
+            token_storage=FileTreeStore(
+                data_directory=cache,
+                key_sanitization_strategy=flat_names,
+                collection_sanitization_strategy=flat_names,
+            ),
+        )
 
     async def connect(self) -> None:
         """List the server's tools once at startup and resolve the search tool."""
@@ -92,6 +162,7 @@ class AlienRetriever:
         try:
             async with client:
                 self._tools = list(await client.list_tools())
+                self._datasets = await self._fetch_dataset_names(client)
         except Exception as exc:  # noqa: BLE001 - transport and auth errors alike
             raise RetrievalUnavailableError(
                 f"cannot reach the Alien MCP server at {self.endpoint}: {exc}"
@@ -105,8 +176,9 @@ class AlienRetriever:
                 "Set ALIEN_MCP_SEARCH_TOOL to pick one explicitly."
             )
         logger.info(
-            "Alien MCP ready on %s: searching with %r out of %s",
+            "Alien MCP ready on %s (auth: %s): searching with %r out of %s",
             self.endpoint,
+            self.auth_mode,
             self.search_tool,
             self.tool_names,
         )
@@ -123,6 +195,8 @@ class AlienRetriever:
         self._client = None
         self._tools = []
         self._search_tool = None
+        self._datasets = {}
+        self._entry_titles = {}
 
     # ----------------------------------------------------------------- search
 
@@ -144,18 +218,117 @@ class AlienRetriever:
                 result = await client.call_tool(
                     self._search_tool.name, arguments, raise_on_error=False
                 )
+                if getattr(result, "is_error", False):
+                    detail = (
+                        _text_of(result.content[0])
+                        if result.content
+                        else "the tool reported an error"
+                    )
+                    raise RetrievalError(detail)
+                records = _to_records(_payload_of(result))[:size]
+                await self._label(records, client)
+        except RetrievalError:
+            raise
         except Exception as exc:  # noqa: BLE001 - reported to the agent as a failed search
             logger.warning("Alien search for %r failed: %s", query, exc)
             raise RetrievalError(str(exc)) from exc
 
-        if getattr(result, "is_error", False):
-            detail = _text_of(result.content[0]) if result.content else "the tool reported an error"
-            raise RetrievalError(detail)
+        return [_to_chunk(record) for record in records]
 
-        payload = result.data
-        if payload is None and result.content:
-            payload = _text_of(result.content[0])
-        return _to_chunks(payload)[:size]
+    # ------------------------------------------------------------------ names
+
+    async def _label(self, records: list[Any], client: Any) -> None:
+        """Give the hits a title and a dataset name, in place.
+
+        A chunk comes back as text plus the ids of the entry and dataset it was
+        cut from, which is no use in a citation. The entry is named by another
+        tool on the same server; the dataset names were read at startup.
+        """
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            dataset = self._datasets.get(_field(record, DATASET_ID_FIELDS))
+            if dataset and not _field(record, SOURCE_FIELDS):
+                record["source"] = dataset
+
+        tool = self._pick_tool("entry", "document")
+        if tool is None:
+            return
+
+        unknown = {
+            entry_id
+            for record in records
+            if isinstance(record, dict) and not _field(record, TITLE_FIELDS)
+            for entry_id in [_field(record, ENTRY_ID_FIELDS)]
+            if entry_id and entry_id not in self._entry_titles
+        }
+        if unknown:
+            named = await asyncio.gather(
+                *(self._entry_title(client, tool, entry_id) for entry_id in unknown),
+                return_exceptions=True,
+            )
+            for entry_id, title in zip(unknown, named):
+                self._entry_titles[entry_id] = title if isinstance(title, str) else ""
+
+        for record in records:
+            if not isinstance(record, dict) or _field(record, TITLE_FIELDS):
+                continue
+            title = self._entry_titles.get(_field(record, ENTRY_ID_FIELDS))
+            if title:
+                record["title"] = title
+
+    async def _entry_title(self, client: Any, tool: Any, entry_id: str) -> str:
+        """Ask the server what the entry a chunk came from is called."""
+        properties: dict[str, Any] = (getattr(tool, "inputSchema", None) or {}).get(
+            "properties"
+        ) or {}
+        name = _first_present(properties, ENTRY_ID_FIELDS) or ENTRY_ID_FIELDS[0]
+        value: Any = entry_id
+        if (properties.get(name) or {}).get("type") == "integer":
+            try:
+                value = int(entry_id)
+            except ValueError:
+                return ""
+
+        try:
+            result = await client.call_tool(tool.name, {name: value}, raise_on_error=False)
+        except Exception as exc:  # noqa: BLE001 - a nameless source beats a failed search
+            logger.debug("Could not name entry %s: %s", entry_id, exc)
+            return ""
+        if getattr(result, "is_error", False):
+            return ""
+        records = _to_records(_payload_of(result))
+        first = next((r for r in records if isinstance(r, dict)), {})
+        return _field(first, TITLE_FIELDS)[:300]
+
+    async def _fetch_dataset_names(self, client: Any) -> dict[str, str]:
+        """Read the dataset catalogue once, so hits can say where they came from."""
+        tool = self._pick_tool("list", "dataset")
+        if tool is None:
+            return {}
+        try:
+            result = await client.call_tool(tool.name, {}, raise_on_error=False)
+        except Exception as exc:  # noqa: BLE001 - the corpus is usable without names
+            logger.debug("Could not list datasets on %s: %s", self.endpoint, exc)
+            return {}
+        if getattr(result, "is_error", False):
+            return {}
+
+        names: dict[str, str] = {}
+        for record in _to_records(_payload_of(result)):
+            if not isinstance(record, dict):
+                continue
+            identifier = _field(record, ("id", *DATASET_ID_FIELDS))
+            name = _field(record, TITLE_FIELDS)
+            if identifier and name:
+                names[identifier] = name
+        return names
+
+    def _pick_tool(self, *hints: str) -> Any | None:
+        return next(
+            (tool for tool in self._tools if all(hint in tool.name.lower() for hint in hints)),
+            None,
+        )
 
     def _arguments(self, query: str, size: int) -> dict[str, Any]:
         """Fill the search tool's own argument names from its advertised schema."""
@@ -218,29 +391,61 @@ def _text_of(block: Any) -> str:
     return str(getattr(block, "text", "") or "")
 
 
-def _to_chunks(payload: Any) -> list[Chunk]:
-    """Normalise whatever the tool returned into passages.
+def _payload_of(result: Any) -> Any:
+    payload = result.data
+    if payload is None and result.content:
+        payload = _text_of(result.content[0])
+    return payload
 
-    MCP tools are free to answer with a list, an envelope around a list, or one
-    blob of text, so the shape is discovered rather than assumed.
+
+def _to_chunks(payload: Any) -> list[Chunk]:
+    return [_to_chunk(record) for record in _to_records(payload)]
+
+
+def _to_records(payload: Any, depth: int = 0) -> list[Any]:
+    """Dig the hits out of whatever the tool answered with.
+
+    MCP tools are free to answer with a list, an envelope around a list, a
+    JSON string, or one blob of text — and Alien's data cluster answers with a
+    structured object holding a JSON string holding an envelope. The shape is
+    discovered rather than assumed.
     """
-    if payload is None:
+    payload = _plain(payload)
+    if payload is None or depth > MAX_UNWRAP_DEPTH:
         return []
+
     if isinstance(payload, str):
         try:
-            payload = json.loads(payload)
+            parsed = json.loads(payload)
         except json.JSONDecodeError:
-            return [Chunk(text=payload[:1500])] if payload.strip() else []
+            return [{"text": payload[:1500]}] if payload.strip() else []
+        return _to_records(parsed, depth + 1)
+
+    if isinstance(payload, list):
+        return payload
 
     if isinstance(payload, dict):
         for key in RESULT_KEYS:
             value = payload.get(key)
-            if isinstance(value, list):
-                return [_to_chunk(item) for item in value]
-        return [_to_chunk(payload)]
-    if isinstance(payload, list):
-        return [_to_chunk(item) for item in payload]
-    return [Chunk(text=str(payload)[:1500])]
+            if value is None or value == "":
+                continue
+            return _to_records(value, depth + 1)
+        return [payload]
+
+    return [{"text": str(payload)[:1500]}]
+
+
+def _plain(payload: Any) -> Any:
+    """Structured tool output arrives as a generated model, not as a dict."""
+    if payload is None or isinstance(payload, (str, bytes, dict, list, int, float, bool)):
+        return payload.decode("utf-8", "replace") if isinstance(payload, bytes) else payload
+    dump = getattr(payload, "model_dump", None)
+    if callable(dump):
+        try:
+            return dump(mode="json")
+        except TypeError:
+            return dump()
+    return vars(payload) if hasattr(payload, "__dict__") else payload
 
 
 def _to_chunk(item: Any) -> Chunk:
