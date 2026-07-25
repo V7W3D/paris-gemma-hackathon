@@ -29,7 +29,8 @@ def client(settings: Settings, monkeypatch: pytest.MonkeyPatch):
 def test_status_reports_the_wiring(client: TestClient):
     status = client.get("/api/status").json()
     assert status["llm_mocked"] is True
-    assert status["mcp_tools"] == ["web_search", "fetch_url"]
+    assert status["search_mocked"] is True
+    assert status["alien_endpoint"] == "mock"
 
 
 def test_chat_crud_round_trip(client: TestClient):
@@ -68,7 +69,7 @@ def test_non_streaming_turn_returns_the_message_and_events(client: TestClient):
 
     assert payload["message"]["role"] == "assistant"
     assert payload["message"]["verdict"] is not None
-    assert {e["type"] for e in payload["events"]} >= {"stage", "tool_call", "message", "done"}
+    assert {e["type"] for e in payload["events"]} >= {"stage", "retrieval", "message", "done"}
     assert not any(e["type"] == "token" for e in payload["events"])
 
 

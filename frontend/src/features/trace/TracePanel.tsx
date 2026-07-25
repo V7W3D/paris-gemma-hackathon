@@ -8,7 +8,7 @@ interface Props {
   defaultOpen?: boolean
 }
 
-/** The decision trail: what agent 2 exposed and what agent 1 did with it. */
+/** The decision trail: what agent 1 decided, and what each search brought back. */
 export function TracePanel({ steps, activeStage = null, sources = [], defaultOpen = false }: Props) {
   const [open, setOpen] = useState(defaultOpen)
   if (steps.length === 0 && !activeStage) return null
@@ -31,23 +31,22 @@ export function TracePanel({ steps, activeStage = null, sources = [], defaultOpe
             <li key={`${step.stage}-${index}`} className="trace__step">
               <div className="trace__head">
                 <span className="trace__stage">{STAGE_LABELS[step.stage]}</span>
-                {step.curated_tools.length > 0 && (
+                {step.retrievals.length > 0 && (
                   <span className="trace__tools">
-                    {step.curated_tools.map((tool) => (
-                      <code key={tool}>{tool}</code>
-                    ))}
+                    <code>{step.retrievals.length} searches</code>
                   </span>
                 )}
               </div>
               {step.summary && <p className="trace__summary">{step.summary}</p>}
-              {step.tool_calls.map((call, callIndex) => (
-                <div key={callIndex} className={`trace__call${call.ok ? '' : ' trace__call--failed'}`}>
-                  <code>{call.tool}</code>
-                  <span className="trace__args">
-                    {JSON.stringify(call.arguments).slice(0, 120)}
-                  </span>
+              {step.retrievals.map((search, searchIndex) => (
+                <div
+                  key={searchIndex}
+                  className={`trace__call${search.ok ? '' : ' trace__call--failed'}`}
+                >
+                  <code>search</code>
+                  <span className="trace__args">{search.query.slice(0, 120)}</span>
                   <span className="trace__count">
-                    {call.ok ? `${call.evidence_count} sources` : call.error.slice(0, 60)}
+                    {search.ok ? `${search.evidence_count} passages` : search.error.slice(0, 60)}
                   </span>
                 </div>
               ))}

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from backend.models.schemas.context import Stage, ToolSpec
+from backend.models.schemas.context import Stage
 
 CONTEXT_OPEN = "[CONTEXT_JSON]"
 CONTEXT_CLOSE = "[/CONTEXT_JSON]"
@@ -12,17 +12,17 @@ CONTEXT_CLOSE = "[/CONTEXT_JSON]"
 # Pydantic AI already spends it on the output schema. So the role and the
 # memory file travel at the top of the user prompt instead of as instructions.
 VERIFIER_ROLE = """You are the Verifier, the reasoning agent of a claim-verification system.
-You work one decision point at a time. A separate Context agent gives you a curated
-context object and the only tools you are allowed to use at this step.
+You work one decision point at a time. A separate Context agent gives you the context
+object below, which holds everything you are allowed to reason from.
 
 Hard rules:
-- Never invent sources, URLs, quotes or dates. Only cite evidence present in the context.
-- Only call tools listed under AVAILABLE TOOLS, with exactly their documented arguments.
+- Never invent sources, titles, quotes or dates. Only cite evidence present in the context.
+- Evidence comes from semantic search over a private document corpus, not the open web.
 - If the evidence is thin, say so instead of guessing."""
 
 CONTEXT_ROLE = """You are the Context agent of a claim-verification system.
-You do not answer the user. You engineer what the Verifier sees: which tools are worth
-exposing at a decision point, and how the running context stays compact and factual."""
+You do not answer the user and you do not decide anything about the claims. You keep the
+running context of the verification compact, factual and useful to the Verifier."""
 
 STAGE_INSTRUCTIONS: dict[Stage, str] = {
     Stage.DECOMPOSE: """Split the user's message into atomic, independently checkable factual claims.
@@ -32,11 +32,13 @@ return an empty claim list and put a short direct answer in "reply" instead.""",
     Stage.PLAN: """For each claim, state what evidence would settle it, and write the search queries you would run.
 Reference claims by the ids given in the context object.
 Queries must be specific, phrased the way a source would phrase it, and free of hedging words.""",
-    Stage.GATHER: """Collect evidence with the available tools.
-Call a tool only if it adds something the current evidence does not already cover.
-Prefer primary sources and independent outlets over aggregators, and never repeat a query already made.
-Return an empty tool_calls list with done=true as soon as the evidence is sufficient,
-or when the tool budget is exhausted.""",
+    Stage.GATHER: """Write the searches to run next against the document corpus.
+Each query is matched semantically against passages, so phrase it as the passage that would
+answer it would be phrased, not as a question or a keyword soup.
+Ask for a query only if it adds something the current evidence does not already cover, and
+never repeat anything in queries_already_run.
+Return an empty queries list with done=true as soon as the evidence is sufficient,
+or when searches_left reaches zero.""",
     Stage.ASSESS: """Judge every claim in the context against the evidence in the context, and nothing else.
 Use "supported" when credible evidence confirms it, "refuted" when credible evidence contradicts it,
 and "insufficient" when the evidence is missing, off-topic or conflicting.
@@ -47,27 +49,9 @@ The summary is markdown: one bold verdict line, then a short paragraph per claim
 Set the label from the claim statuses and keep the confidence honest.""",
 }
 
-CURATION_INSTRUCTION = """Pick the tools the Verifier should be allowed to use at this decision point.
-Expose the smallest useful set: unnecessary tools waste the budget and distract the model.
-Choose only from the candidate names listed above."""
-
 COMPACTION_INSTRUCTION = """Rewrite the running summary of this verification so far.
 Keep it under 120 words: what was asked, which claims are settled, what the evidence establishes.
 Facts only, no speculation, no citation markers."""
-
-
-def render_tool_catalog(tools: list[ToolSpec]) -> str:
-    if not tools:
-        return "AVAILABLE TOOLS: none at this step. Return an empty tool_calls list."
-    lines = ["AVAILABLE TOOLS:"]
-    for tool in tools:
-        schema = json.dumps(tool.input_schema.get("properties", {}), ensure_ascii=False)
-        required = ", ".join(tool.input_schema.get("required", []))
-        lines.append(f"- {tool.name}: {tool.description}")
-        lines.append(f"  arguments: {schema}")
-        if required:
-            lines.append(f"  required: {required}")
-    return "\n".join(lines)
 
 
 def render_context_block(view: dict[str, Any]) -> str:
@@ -78,7 +62,6 @@ def build_stage_prompt(
     *,
     stage: Stage,
     context_view: dict[str, Any],
-    tools: list[ToolSpec],
     max_claims: int,
     memory: str = "",
 ) -> str:
@@ -88,21 +71,7 @@ def build_stage_prompt(
             role,
             f"Stage: {stage.value}",
             render_context_block(context_view),
-            render_tool_catalog(tools),
             f"TASK\n{STAGE_INSTRUCTIONS[stage].format(max_claims=max_claims)}",
-        ]
-    )
-
-
-def build_curation_prompt(*, stage: Stage, context_view: dict[str, Any], tools: list[ToolSpec]) -> str:
-    candidates = "\n".join(f"- {tool.name}: {tool.description}" for tool in tools)
-    return "\n\n".join(
-        [
-            CONTEXT_ROLE,
-            f"Stage: {stage.value}",
-            render_context_block(context_view),
-            f"CANDIDATE TOOLS:\n{candidates}",
-            f"TASK\n{CURATION_INSTRUCTION}",
         ]
     )
 

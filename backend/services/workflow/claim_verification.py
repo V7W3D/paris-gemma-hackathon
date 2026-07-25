@@ -11,15 +11,14 @@ from backend.models.schemas.chat import Conversation, Message, Role, TraceStep
 from backend.models.schemas.context import (
     ContextObject,
     Decision,
+    Retrieval,
     Stage,
-    ToolResult,
-    ToolSpec,
     Verdict,
     VerdictLabel,
 )
 from backend.services.agent.context_agent import ContextAgent
 from backend.services.agent.verifier_agent import VerifierAgent
-from backend.services.mcp.client import MCPToolClient, MCPUnavailableError
+from backend.services.retrieval.alien_client import AlienRetriever, RetrievalError
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +36,10 @@ class ConversationNotFound(LookupError):
 class ClaimVerificationWorkflow:
     """Drives one user turn through the five decision points.
 
-    At every point the context agent assembles context and curates tools, the
-    verifier agent decides, the orchestrator executes any tool calls over MCP,
-    and the context agent folds the outcome back into a new context revision.
+    At every point the context agent assembles the context, the verifier agent
+    decides, the orchestrator runs any searches the verifier asked for against
+    the Alien corpus, and the context agent folds the outcome back into a new
+    context revision.
     """
 
     def __init__(
@@ -47,13 +47,13 @@ class ClaimVerificationWorkflow:
         *,
         verifier: VerifierAgent,
         context_agent: ContextAgent,
-        tools: MCPToolClient,
+        retriever: AlienRetriever,
         store: Store,
         settings: Settings,
     ) -> None:
         self._verifier = verifier
         self._context = context_agent
-        self._tools = tools
+        self._retriever = retriever
         self._store = store
         self._settings = settings
 
@@ -105,15 +105,8 @@ class ClaimVerificationWorkflow:
         )
         trace: list[TraceStep] = []
 
-        try:
-            available = await self._tools.list_tools()
-        except MCPUnavailableError as exc:
-            logger.warning("%s; continuing without tools", exc)
-            available = []
-            yield {"type": "warning", "message": str(exc)}
-
         # 1. DECOMPOSE
-        context, decision, events = await self._step(context, Stage.DECOMPOSE, available, trace)
+        context, decision, events = await self._step(context, Stage.DECOMPOSE, trace)
         for event in events:
             yield event
         if not context.claims:
@@ -133,25 +126,25 @@ class ClaimVerificationWorkflow:
         yield {"type": "claims", "claims": [c.model_dump(mode="json") for c in context.claims]}
 
         # 2. PLAN
-        context, _, events = await self._step(context, Stage.PLAN, available, trace)
+        context, _, events = await self._step(context, Stage.PLAN, trace)
         for event in events:
             yield event
 
         # 3. GATHER (loop until the verifier is satisfied or the budget runs out)
         for _ in range(self._settings.max_gather_steps):
-            context, decision, events = await self._step(context, Stage.GATHER, available, trace)
+            context, decision, events = await self._step(context, Stage.GATHER, trace)
             for event in events:
                 yield event
-            if decision.done or not decision.tool_calls:
+            if decision.done or not decision.queries or context.searches_used >= context.search_budget:
                 break
 
         # 4. ASSESS
-        context, _, events = await self._step(context, Stage.ASSESS, available, trace)
+        context, _, events = await self._step(context, Stage.ASSESS, trace)
         for event in events:
             yield event
 
         # 5. VERDICT
-        context, _, events = await self._step(context, Stage.VERDICT, available, trace)
+        context, _, events = await self._step(context, Stage.VERDICT, trace)
         for event in events:
             yield event
 
@@ -170,55 +163,34 @@ class ClaimVerificationWorkflow:
         self,
         context: ContextObject,
         stage: Stage,
-        available: list[ToolSpec],
         trace: list[TraceStep],
     ) -> tuple[ContextObject, Decision, list[Event]]:
-        """One decision point: curate, decide, execute tools, commit."""
+        """One decision point: decide, run any searches asked for, commit."""
         context = self._context.advance(context, stage)
-        curated = await self._context.curate(context=context, available_tools=available)
-        context.curated_tools = [tool.name for tool in curated]
 
-        events: list[Event] = [
-            {
-                "type": "stage",
-                "stage": stage.value,
-                "status": "started",
-                "curated_tools": context.curated_tools,
-            }
-        ]
+        events: list[Event] = [{"type": "stage", "stage": stage.value, "status": "started"}]
 
-        decision = await self._verifier.run(context=context, tools=curated)
-
-        results: list[ToolResult] = []
-        for call in decision.tool_calls:
-            outcome = await self._tools.call_tool(call.tool, call.arguments)
-            results.append(
-                ToolResult(
-                    tool=call.tool,
-                    arguments=call.arguments,
-                    ok=bool(outcome.get("ok")),
-                    error=str(outcome.get("error", "")),
-                    raw=outcome.get("data"),
-                )
-            )
-
-        context = await self._context.commit(
-            context=context, decision=decision, tool_results=results
+        decision = await self._verifier.run(context=context)
+        retrievals = (
+            await self._search(decision.queries, context) if stage is Stage.GATHER else []
         )
 
-        for result in results:
+        context = await self._context.commit(
+            context=context, decision=decision, retrievals=retrievals
+        )
+
+        for retrieval in retrievals:
             events.append(
                 {
-                    "type": "tool_call",
+                    "type": "retrieval",
                     "stage": stage.value,
-                    "tool": result.tool,
-                    "arguments": result.arguments,
-                    "ok": result.ok,
-                    "error": result.error,
+                    "query": retrieval.query,
+                    "ok": retrieval.ok,
+                    "error": retrieval.error,
                     "evidence": [
                         e.model_dump(mode="json")
                         for e in context.evidence
-                        if e.id in result.evidence_ids
+                        if e.id in retrieval.evidence_ids
                     ],
                 }
             )
@@ -227,16 +199,14 @@ class ClaimVerificationWorkflow:
             TraceStep(
                 stage=stage,
                 summary=decision.summary,
-                curated_tools=context.curated_tools,
-                tool_calls=[
+                retrievals=[
                     {
-                        "tool": r.tool,
-                        "arguments": r.arguments,
+                        "query": r.query,
                         "ok": r.ok,
                         "error": r.error,
                         "evidence_count": len(r.evidence_ids),
                     }
-                    for r in results
+                    for r in retrievals
                 ],
             )
         )
@@ -251,6 +221,23 @@ class ClaimVerificationWorkflow:
             }
         )
         return context, decision, events
+
+    async def _search(self, queries: list[str], context: ContextObject) -> list[Retrieval]:
+        """Run the verifier's queries, capped by what is left of the search budget."""
+        budget = max(context.search_budget - context.searches_used, 0)
+        retrievals: list[Retrieval] = []
+
+        for query in queries[:budget]:
+            try:
+                chunks = await self._retriever.search(query)
+            except RetrievalError as exc:
+                retrievals.append(Retrieval(query=query, ok=False, error=str(exc)))
+                continue
+            retrievals.append(Retrieval(query=query, chunks=chunks))
+
+        if len(queries) > budget:
+            logger.info("Dropped %d queries over the search budget", len(queries) - budget)
+        return retrievals
 
     async def _reveal(self, text: str) -> AsyncIterator[Event]:
         """Push the final answer out in chunks so the UI can render it as it lands."""

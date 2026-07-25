@@ -26,12 +26,12 @@ class Settings(BaseSettings):
     mongodb_db: str = "claim_verifier"
     mongodb_timeout_ms: int = 2000
 
-    serpapi_api_key: str = ""
-    serpapi_base_url: str = "https://serpapi.com/search.json"
-
-    mcp_url: str = ""
-    mcp_host: str = "127.0.0.1"
-    mcp_port: int = 9000
+    alien_mcp_url: str = ""
+    alien_mcp_token: str = ""
+    alien_mcp_search_tool: str = ""
+    alien_dataset_ids: list[int] = []
+    alien_search_limit: int = 8
+    alien_mcp_timeout_seconds: float = 30.0
 
     mock_llm: bool = False
     mock_search: bool = False
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     @property
     def search_is_mocked(self) -> bool:
-        return self.mock_search or not self.serpapi_api_key
+        return self.mock_search or not self.alien_mcp_url
 
 
 @lru_cache

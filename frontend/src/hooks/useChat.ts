@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, streamMessage } from '@/lib/api'
-import type { Claim, Evidence, Message, Stage, StreamEvent, TraceStep } from '@/lib/types'
+import type {
+  Claim,
+  Evidence,
+  Message,
+  Stage,
+  StreamEvent,
+  TraceRetrieval,
+  TraceStep,
+} from '@/lib/types'
 
 export interface LiveRun {
   stage: Stage | null
@@ -8,9 +16,18 @@ export interface LiveRun {
   claims: Claim[]
   evidence: Evidence[]
   answer: string
+  /** Searches seen since the stage started, folded into the step when it completes. */
+  pending: TraceRetrieval[]
 }
 
-const emptyRun: LiveRun = { stage: null, steps: [], claims: [], evidence: [], answer: '' }
+const emptyRun: LiveRun = {
+  stage: null,
+  steps: [],
+  claims: [],
+  evidence: [],
+  answer: '',
+  pending: [],
+}
 
 /** Loads one conversation and runs verification turns against it. */
 export function useChat(conversationId: string | null, onTurnComplete?: () => void) {
@@ -70,44 +87,36 @@ export function useChat(conversationId: string | null, onTurnComplete?: () => vo
           case 'stage':
             setRun((current) =>
               event.status === 'started'
-                ? { ...current, stage: event.stage }
+                ? { ...current, stage: event.stage, pending: [] }
                 : {
                     ...current,
                     stage: null,
+                    pending: [],
                     steps: [
                       ...current.steps,
                       {
                         stage: event.stage,
                         summary: event.summary ?? '',
-                        curated_tools: event.curated_tools ?? [],
-                        tool_calls: [],
+                        retrievals: current.pending,
                         created_at: new Date().toISOString(),
                       },
                     ],
                   },
             )
             break
-          case 'tool_call':
+          case 'retrieval':
             setRun((current) => ({
               ...current,
               evidence: [...current.evidence, ...event.evidence],
-              steps: current.steps.map((step, index) =>
-                index === current.steps.length - 1 && step.stage === event.stage
-                  ? {
-                      ...step,
-                      tool_calls: [
-                        ...step.tool_calls,
-                        {
-                          tool: event.tool,
-                          arguments: event.arguments,
-                          ok: event.ok,
-                          error: event.error,
-                          evidence_count: event.evidence.length,
-                        },
-                      ],
-                    }
-                  : step,
-              ),
+              pending: [
+                ...current.pending,
+                {
+                  query: event.query,
+                  ok: event.ok,
+                  error: event.error,
+                  evidence_count: event.evidence.length,
+                },
+              ],
             }))
             break
           case 'token':

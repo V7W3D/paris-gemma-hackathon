@@ -12,7 +12,6 @@ from backend.services.agent.prompts import CONTEXT_CLOSE, CONTEXT_OPEN
 _CONTEXT_RE = re.compile(
     re.escape(CONTEXT_OPEN) + r"\s*(.*?)\s*" + re.escape(CONTEXT_CLOSE), re.DOTALL
 )
-_CANDIDATE_RE = re.compile(r"^- ([a-z_][a-z0-9_]*):", re.MULTILINE)
 
 MOCK_NOTE = "mock inference — no Brev endpoint configured"
 
@@ -21,8 +20,8 @@ def build_mock_model() -> FunctionModel:
     """A deterministic stand-in for the Brev deployment.
 
     It reads the context block out of the prompt and answers with the shape the
-    stage expects, so the whole workflow — including MCP tool use — runs offline
-    and in tests through exactly the same code paths.
+    stage expects, so the whole workflow — including corpus retrieval — runs
+    offline and in tests through exactly the same code paths.
     """
     return FunctionModel(_respond, model_name="mock")
 
@@ -86,14 +85,12 @@ def _plan(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
 
 def _gather(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
     claims = context.get("claims", [])
-    budget = context.get("tool_budget_left", 0)
+    budget = context.get("searches_left", 0)
     if budget <= 0 or context.get("evidence") or not claims:
-        return {"thought": "the evidence collected is enough", "tool_calls": [], "done": True}
+        return {"thought": "the evidence collected is enough", "queries": [], "done": True}
     return {
-        "thought": "searching for sources on the first claim",
-        "tool_calls": [
-            {"tool": "web_search", "arguments": {"query": claims[0]["text"], "num_results": 4}}
-        ],
+        "thought": "searching the corpus for the first claim",
+        "queries": [claims[0]["text"]],
         "done": False,
     }
 
@@ -144,10 +141,6 @@ def _verdict(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
     }
 
 
-def _curation(_context: dict[str, Any], prompt: str) -> dict[str, Any]:
-    return {"thought": "exposing the search tool only", "tools": _CANDIDATE_RE.findall(prompt)[:1]}
-
-
 def _compaction(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
     statuses = "; ".join(
         f"{claim['text'][:60]} -> {claim.get('status', 'pending')}"
@@ -166,6 +159,5 @@ _HANDLERS: dict[str, Callable[[dict[str, Any], str], dict[str, Any]]] = {
     "GatherOutput": _gather,
     "AssessOutput": _assess,
     "VerdictOutput": _verdict,
-    "CurationOutput": _curation,
     "CompactionOutput": _compaction,
 }

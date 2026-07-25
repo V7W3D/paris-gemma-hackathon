@@ -20,13 +20,6 @@ class StageOutput(BaseModel):
     thought: str = Field(default="", description="One short sentence explaining the decision.")
 
 
-class ToolCallRequest(BaseModel):
-    tool: str = Field(description="Name of a tool from AVAILABLE TOOLS.")
-    arguments: dict[str, Any] = Field(
-        default_factory=dict, description="Arguments object for that tool."
-    )
-
-
 class DecomposeOutput(StageOutput):
     """Atomic factual claims found in the user's message."""
 
@@ -62,12 +55,22 @@ class PlanOutput(StageOutput):
 
 
 class GatherOutput(StageOutput):
-    """Tool calls to run next, or the decision to stop gathering."""
+    """The searches to run next, or the decision to stop gathering."""
 
-    tool_calls: list[ToolCallRequest] = Field(default_factory=list)
+    queries: list[str] = Field(
+        default_factory=list,
+        description="Searches to run against the corpus. Empty when no more are needed.",
+    )
     done: bool = Field(
         default=False, description="True when the evidence collected is enough to judge."
     )
+
+    @field_validator("queries", mode="before")
+    @classmethod
+    def _flatten(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [item.get("query", "") if isinstance(item, dict) else item for item in value]
+        return value
 
 
 class ClaimAssessment(BaseModel):
@@ -119,14 +122,6 @@ class VerdictOutput(StageOutput):
             return min(max(float(value), 0.0), 1.0)
         except (TypeError, ValueError):
             return 0.0
-
-
-class CurationOutput(StageOutput):
-    """The tools agent 2 exposes to agent 1 at this decision point."""
-
-    tools: list[str] = Field(
-        default_factory=list, description="Subset of the candidate tool names."
-    )
 
 
 class CompactionOutput(StageOutput):

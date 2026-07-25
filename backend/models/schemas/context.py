@@ -72,30 +72,29 @@ class Evidence(BaseModel):
     source: str = ""
     stance: Stance = Stance.UNCLEAR
     credibility: float = 0.5
-    tool: str = ""
+    query: str = ""
     retrieved_at: datetime = Field(default_factory=_now)
 
 
-class ToolSpec(BaseModel):
-    """A tool as advertised by the MCP server, in the shape agent 1 sees it."""
+class Chunk(BaseModel):
+    """A raw hit from the Alien data cluster, before agent 2 admits it as evidence."""
 
-    name: str
-    description: str = ""
-    input_schema: dict[str, Any] = Field(default_factory=dict)
-
-
-class ToolCall(BaseModel):
-    tool: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    title: str = ""
+    text: str = ""
+    url: str = ""
+    source: str = ""
+    score: float = 0.0
 
 
-class ToolResult(BaseModel):
-    tool: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+class Retrieval(BaseModel):
+    """One semantic search run against the corpus, and what came back."""
+
+    id: str = Field(default_factory=_uid)
+    query: str
     ok: bool = True
     error: str = ""
+    chunks: list[Chunk] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
-    raw: Any = None
 
 
 class Decision(BaseModel):
@@ -104,9 +103,8 @@ class Decision(BaseModel):
     id: str = Field(default_factory=_uid)
     stage: Stage
     summary: str = ""
-    tool_calls: list[ToolCall] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list)
     output: dict[str, Any] = Field(default_factory=dict)
-    curated_tools: list[str] = Field(default_factory=list)
     done: bool = True
     created_at: datetime = Field(default_factory=_now)
 
@@ -122,8 +120,8 @@ class Verdict(BaseModel):
 class ContextObject(BaseModel):
     """The engineered context handed to agent 1 at every decision point.
 
-    Agent 2 owns this object: it assembles it, curates the tool list on it, and
-    persists a new revision after each decision.
+    Agent 2 owns this object and nothing else: it assembles it, folds each
+    decision and its retrievals into it, and persists a new revision.
     """
 
     id: str = Field(default_factory=_uid)
@@ -136,10 +134,10 @@ class ContextObject(BaseModel):
     claims: list[Claim] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     decisions: list[Decision] = Field(default_factory=list)
-    curated_tools: list[str] = Field(default_factory=list)
+    retrievals: list[Retrieval] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
-    tool_budget: int = 0
-    tools_used: int = 0
+    search_budget: int = 0
+    searches_used: int = 0
     verdict: Verdict | None = None
     created_at: datetime = Field(default_factory=_now)
 
@@ -152,8 +150,9 @@ class ContextObject(BaseModel):
     def prompt_view(self, max_evidence: int = 12) -> dict[str, Any]:
         """The trimmed projection of the context that actually enters the prompt.
 
-        Raw tool payloads and full decision history stay in the database; the
-        model only sees claims, recent evidence and a compacted trail.
+        Raw retrieval payloads and the full decision history stay in the
+        database; the model only sees claims, recent evidence and a compacted
+        trail.
         """
         return {
             "question": self.question,
@@ -184,5 +183,6 @@ class ContextObject(BaseModel):
             "decision_trail": [
                 {"stage": d.stage.value, "summary": d.summary} for d in self.decisions
             ],
-            "tool_budget_left": max(self.tool_budget - self.tools_used, 0),
+            "queries_already_run": [r.query for r in self.retrievals],
+            "searches_left": max(self.search_budget - self.searches_used, 0),
         }

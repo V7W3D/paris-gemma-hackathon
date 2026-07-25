@@ -10,20 +10,20 @@ from backend.db.store import Store
 from backend.services.agent.context_agent import ContextAgent
 from backend.services.agent.llm_client import Inference
 from backend.services.agent.verifier_agent import VerifierAgent
-from backend.services.mcp.client import MCPToolClient, MCPUnavailableError
+from backend.services.retrieval.alien_client import AlienRetriever, RetrievalUnavailableError
 from backend.services.workflow.claim_verification import ClaimVerificationWorkflow
 
 logger = logging.getLogger(__name__)
 
 
 class AppContainer:
-    """Wires the two agents, the tool client and the store together."""
+    """Wires the two agents, the Alien MCP retriever and the store together."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.database = Database(self.settings)
         self.inference = Inference(self.settings)
-        self.tools = MCPToolClient(self.settings)
+        self.retriever = AlienRetriever(self.settings)
         self.store: Store = self.database.store
         self.context_agent = ContextAgent(self.inference, self.store, self.settings)
         self.verifier = VerifierAgent(self.inference, self.settings)
@@ -33,7 +33,7 @@ class AppContainer:
         return ClaimVerificationWorkflow(
             verifier=self.verifier,
             context_agent=self.context_agent,
-            tools=self.tools,
+            retriever=self.retriever,
             store=self.store,
             settings=self.settings,
         )
@@ -43,12 +43,12 @@ class AppContainer:
         self.context_agent = ContextAgent(self.inference, self.store, self.settings)
         self.workflow = self._build_workflow()
         try:
-            await self.tools.connect()
-        except MCPUnavailableError as exc:
-            logger.warning("%s; the verifier will run without tools", exc)
+            await self.retriever.connect()
+        except RetrievalUnavailableError as exc:
+            logger.warning("%s; gathering will return no evidence", exc)
 
     async def shutdown(self) -> None:
-        await self.tools.aclose()
+        await self.retriever.aclose()
         await self.inference.aclose()
         await self.database.close()
 
@@ -57,9 +57,10 @@ class AppContainer:
             "mongo_connected": self.database.connected,
             "llm_mocked": self.inference.mocked,
             "llm_model": self.settings.brev_model,
-            "search_mocked": self.settings.search_is_mocked,
-            "mcp_transport": self.tools.transport_label,
-            "mcp_tools": self.tools.tool_names,
+            "search_mocked": self.retriever.mocked,
+            "alien_endpoint": self.retriever.endpoint,
+            "alien_search_tool": self.retriever.search_tool,
+            "alien_tools": self.retriever.tool_names,
         }
 
 

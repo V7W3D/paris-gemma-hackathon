@@ -130,7 +130,7 @@ export function HistorySidebar({
           </div>
           <div className="status-row">
             <span className={`dot${status.search_mocked ? ' dot--hollow' : ''}`} />
-            <span>{status.search_mocked ? 'Mock search' : 'SerpAPI live'}</span>
+            <span>{status.search_mocked ? 'Mock corpus' : 'Alien MCP'}</span>
           </div>
           <div className="status-row">
             <span className={`dot${status.mongo_connected ? '' : ' dot--hollow'}`} />
@@ -138,7 +138,7 @@ export function HistorySidebar({
           </div>
           <div className="status-row">
             <span className="dot" />
-            <span>MCP · {status.mcp_tools.length} tools</span>
+            <span>Search · {status.alien_search_tool}</span>
           </div>
         </footer>
       )}

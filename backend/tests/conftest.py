@@ -7,7 +7,7 @@ from backend.db.store import MemoryStore
 from backend.services.agent.context_agent import ContextAgent
 from backend.services.agent.llm_client import Inference
 from backend.services.agent.verifier_agent import VerifierAgent
-from backend.services.mcp.client import MCPToolClient
+from backend.services.retrieval.alien_client import AlienRetriever
 from backend.services.workflow.claim_verification import ClaimVerificationWorkflow
 
 
@@ -17,8 +17,7 @@ def settings() -> Settings:
         mock_llm=True,
         mock_search=True,
         brev_base_url="",
-        serpapi_api_key="",
-        mcp_url="",
+        alien_mcp_url="",
         max_gather_steps=2,
     )
 
@@ -44,22 +43,22 @@ def verifier(inference: Inference, settings: Settings) -> VerifierAgent:
 
 
 @pytest.fixture
-def tools(settings: Settings) -> MCPToolClient:
-    return MCPToolClient(settings)
+def retriever(settings: Settings) -> AlienRetriever:
+    return AlienRetriever(settings)
 
 
 @pytest.fixture
 def workflow(
     verifier: VerifierAgent,
     context_agent: ContextAgent,
-    tools: MCPToolClient,
+    retriever: AlienRetriever,
     store: MemoryStore,
     settings: Settings,
 ) -> ClaimVerificationWorkflow:
     return ClaimVerificationWorkflow(
         verifier=verifier,
         context_agent=context_agent,
-        tools=tools,
+        retriever=retriever,
         store=store,
         settings=settings,
     )

@@ -28,8 +28,7 @@ class TraceStep(BaseModel):
 
     stage: Stage
     summary: str = ""
-    curated_tools: list[str] = Field(default_factory=list)
-    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    retrievals: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_now)
 
 

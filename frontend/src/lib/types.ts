@@ -23,7 +23,7 @@ export interface Evidence {
   source: string
   stance: Stance
   credibility: number
-  tool: string
+  query: string
   retrieved_at: string
 }
 
@@ -35,9 +35,8 @@ export interface Verdict {
   sources: Evidence[]
 }
 
-export interface TraceToolCall {
-  tool: string
-  arguments: Record<string, unknown>
+export interface TraceRetrieval {
+  query: string
   ok: boolean
   error: string
   evidence_count: number
@@ -46,8 +45,7 @@ export interface TraceToolCall {
 export interface TraceStep {
   stage: Stage
   summary: string
-  curated_tools: string[]
-  tool_calls: TraceToolCall[]
+  retrievals: TraceRetrieval[]
   created_at: string
 }
 
@@ -82,15 +80,16 @@ export interface SystemStatus {
   llm_mocked: boolean
   llm_model: string
   search_mocked: boolean
-  mcp_transport: string
-  mcp_tools: string[]
+  alien_endpoint: string
+  alien_search_tool: string
+  alien_tools: string[]
 }
 
 export type StreamEvent =
   | { type: 'turn_started'; turn_id: string; conversation_title: string; message: Message }
-  | { type: 'stage'; stage: Stage; status: 'started' | 'completed'; curated_tools?: string[]; summary?: string; detail?: Record<string, unknown> }
+  | { type: 'stage'; stage: Stage; status: 'started' | 'completed'; summary?: string; detail?: Record<string, unknown> }
   | { type: 'claims'; claims: Claim[] }
-  | { type: 'tool_call'; stage: Stage; tool: string; arguments: Record<string, unknown>; ok: boolean; error: string; evidence: Evidence[] }
+  | { type: 'retrieval'; stage: Stage; query: string; ok: boolean; error: string; evidence: Evidence[] }
   | { type: 'token'; text: string }
   | { type: 'message'; message: Message }
   | { type: 'warning'; message: string }

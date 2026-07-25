@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from backend.config import Settings
 from backend.db.store import Store
-from backend.models.schemas.actions import CompactionOutput, CurationOutput
+from backend.models.schemas.actions import CompactionOutput
 from backend.models.schemas.chat import Conversation, Role
 from backend.models.schemas.context import (
     Claim,
@@ -15,37 +15,26 @@ from backend.models.schemas.context import (
     ContextObject,
     Decision,
     Evidence,
+    Retrieval,
     Stage,
     Stance,
-    ToolResult,
-    ToolSpec,
     Verdict,
     VerdictLabel,
 )
 from backend.services.agent.llm_client import Inference, LLMError
-from backend.services.agent.prompts import build_compaction_prompt, build_curation_prompt
+from backend.services.agent.prompts import build_compaction_prompt
 
 logger = logging.getLogger(__name__)
 
-# Deterministic fallback used when the model is unavailable or answers nonsense.
-STAGE_TOOL_POLICY: dict[Stage, tuple[str, ...]] = {
-    Stage.DECOMPOSE: (),
-    Stage.PLAN: (),
-    Stage.GATHER: ("web_search", "fetch_url"),
-    Stage.ASSESS: (),
-    Stage.VERDICT: (),
-}
-
-SEARCH_TOOLS = {"web_search"}
 COMPACTION_TRIGGER_CHARS = 6000
 
 
 class ContextAgent:
-    """Agent 2: owns the context object and the tool surface of agent 1.
+    """Agent 2: owns the context object, and only the context object.
 
     Everything agent 1 knows at a decision point was put there by this class:
-    it reads the conversation from Mongo, assembles the context, curates tools,
-    folds each decision back in, and persists the next revision.
+    it reads the conversation from Mongo, assembles the context, folds each
+    decision and its retrievals back in, and persists the next revision.
     """
 
     def __init__(self, inference: Inference, store: Store, settings: Settings) -> None:
@@ -99,7 +88,7 @@ class ContextAgent:
             question=question,
             running_summary=summary,
             evidence=carried,
-            tool_budget=self._settings.max_gather_steps,
+            search_budget=self._settings.max_gather_steps,
         )
         await self._store.save_context(context)
         return context
@@ -123,55 +112,6 @@ class ContextAgent:
             deep=True,
         )
 
-    # ---------------------------------------------------------------- curate
-
-    async def curate(
-        self, *, context: ContextObject, available_tools: list[ToolSpec]
-    ) -> list[ToolSpec]:
-        """Pick the tools agent 1 may use at this decision point."""
-        by_name = {tool.name: tool for tool in available_tools}
-        allowed = [
-            by_name[name] for name in STAGE_TOOL_POLICY.get(context.stage, ()) if name in by_name
-        ]
-        if context.stage is Stage.GATHER and not allowed:
-            allowed = list(available_tools)
-        if not allowed:
-            return []
-        if context.tools_used >= context.tool_budget:
-            logger.info("Tool budget exhausted for turn %s; exposing no tools", context.turn_id)
-            return []
-
-        # Nothing to fetch from yet: keep the first gather step to search only.
-        if context.stage is Stage.GATHER and not context.evidence:
-            search_only = [tool for tool in allowed if tool.name in SEARCH_TOOLS]
-            if search_only:
-                allowed = search_only
-
-        if len(allowed) < 2:
-            return allowed
-
-        selected = await self._curate_with_llm(context, allowed)
-        return selected or allowed
-
-    async def _curate_with_llm(
-        self, context: ContextObject, allowed: list[ToolSpec]
-    ) -> list[ToolSpec]:
-        prompt = build_curation_prompt(
-            stage=context.stage,
-            context_view=context.prompt_view(self._settings.max_evidence_in_context),
-            tools=allowed,
-        )
-        try:
-            output = await self._inference.run(
-                prompt, CurationOutput, temperature=0.0, max_tokens=400
-            )
-        except LLMError as exc:
-            logger.warning("Tool curation fell back to the static policy: %s", exc)
-            return []
-
-        by_name = {tool.name: tool for tool in allowed}
-        return [by_name[name] for name in output.tools if name in by_name]
-
     # ---------------------------------------------------------------- commit
 
     async def commit(
@@ -179,23 +119,25 @@ class ContextAgent:
         *,
         context: ContextObject,
         decision: Decision,
-        tool_results: list[ToolResult] | None = None,
+        retrievals: list[Retrieval] | None = None,
     ) -> ContextObject:
-        """Fold a decision (and anything its tools returned) into a new revision."""
+        """Fold a decision (and anything its searches returned) into a new revision."""
         updated = context.model_copy(deep=True)
         updated.id = uuid4().hex[:12]
         updated.revision = context.revision + 1
-        updated.curated_tools = decision.curated_tools
         updated.decisions = [*context.decisions, decision]
 
-        for result in tool_results or []:
-            updated.tools_used += 1
-            if result.ok:
-                new_evidence = self._evidence_from_tool(result, updated)
-                result.evidence_ids = [e.id for e in new_evidence]
+        for retrieval in retrievals or []:
+            updated.searches_used += 1
+            updated.retrievals.append(retrieval)
+            if retrieval.ok:
+                new_evidence = self._evidence_from_chunks(retrieval, updated)
+                retrieval.evidence_ids = [e.id for e in new_evidence]
                 updated.evidence.extend(new_evidence)
             else:
-                updated.open_questions.append(f"{result.tool} failed: {result.error}")
+                updated.open_questions.append(
+                    f"search for {retrieval.query!r} failed: {retrieval.error}"
+                )
 
         handler = {
             Stage.DECOMPOSE: self._apply_decompose,
@@ -209,54 +151,31 @@ class ContextAgent:
         await self._store.save_context(updated)
         return updated
 
-    def _evidence_from_tool(self, result: ToolResult, context: ContextObject) -> list[Evidence]:
-        data = result.raw
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except json.JSONDecodeError:
-                data = {"text": data}
-        known_urls = {e.url for e in context.evidence if e.url}
+    @staticmethod
+    def _evidence_from_chunks(retrieval: Retrieval, context: ContextObject) -> list[Evidence]:
+        """Admit the hits the context does not already hold, attributed to the query.
+
+        Several chunks routinely come out of the same document, so identity is
+        the passage rather than the source URL.
+        """
+        seen = {(e.url, e.snippet[:120]) for e in context.evidence}
         claim_id = context.claims[0].id if len(context.claims) == 1 else None
         found: list[Evidence] = []
 
-        if isinstance(data, dict) and isinstance(data.get("results"), list):
-            for item in data["results"]:
-                if not isinstance(item, dict):
-                    continue
-                url = str(item.get("url", ""))
-                if url and url in known_urls:
-                    continue
-                known_urls.add(url)
-                found.append(
-                    Evidence(
-                        claim_id=claim_id,
-                        title=str(item.get("title", ""))[:300],
-                        url=url,
-                        snippet=str(item.get("snippet", ""))[:800],
-                        source=str(item.get("source", "")),
-                        tool=result.tool,
-                    )
-                )
-        elif isinstance(data, dict) and data.get("text"):
-            url = str(data.get("url", ""))
+        for chunk in retrieval.chunks:
+            key = (chunk.url, chunk.text[:120])
+            if key in seen:
+                continue
+            seen.add(key)
             found.append(
                 Evidence(
                     claim_id=claim_id,
-                    title=str(data.get("title", "")) or url,
-                    url=url,
-                    snippet=str(data["text"])[:1200],
-                    source=str(data.get("source", "")),
-                    tool=result.tool,
-                )
-            )
-        elif data is not None:
-            found.append(
-                Evidence(
-                    claim_id=claim_id,
-                    title=f"{result.tool} output",
-                    snippet=json.dumps(data, ensure_ascii=False)[:800],
-                    tool=result.tool,
+                    title=chunk.title[:300],
+                    url=chunk.url,
+                    snippet=chunk.text[:1200],
+                    source=chunk.source,
+                    credibility=chunk.score or 0.5,
+                    query=retrieval.query,
                 )
             )
         return found
