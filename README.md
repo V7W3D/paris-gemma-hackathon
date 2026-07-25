@@ -72,27 +72,41 @@ misbehaves. Requests carry a single system message, which is what the Gemma chat
 
 ## Running it
 
-Requirements: Python 3.10+, Node 20+, and optionally MongoDB, a Brev endpoint and an Alien MCP
-server.
+You need Python 3.10+ and Node 20+. Everything else — MongoDB, the Brev endpoint, the Alien MCP
+server — is optional; see [Nothing configured?](#nothing-configured-it-still-runs) below.
+
+Run both commands from the repository root, in two shells:
 
 ```bash
-# backend
+# 1. backend  -> http://localhost:8000
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
-cp backend/.env.example backend/.env      # fill in what you have
+cp backend/.env.example backend/.env      # then fill in the credentials you have
 .venv/bin/python -m uvicorn backend.main:app --reload --port 8000
 
-# frontend (in another shell)
-cd frontend
-npm install
-npm run dev                                # http://localhost:5173, proxies /api to :8000
+# 2. frontend -> http://localhost:5173, proxies /api to :8000
+npm install --prefix frontend
+npm run dev --prefix frontend
 ```
 
-`GET /api/status` reports what is live and what is mocked.
+Open http://localhost:5173. `GET /api/status` reports what is live and what is mocked.
+
+### Where everything goes
+
+| What | Where it goes |
+| --- | --- |
+| Python dependencies | declared in `backend/requirements.txt`, installed into `.venv/` at the repository root |
+| Node dependencies | declared in `frontend/package.json`, installed into `frontend/node_modules/` |
+| Credentials and settings | `backend/.env`, copied from [backend/.env.example](backend/.env.example) — a `.env` at the repository root works too |
+| Agent 1's durable knowledge | `backend/memory/verifier_memory.md`, edited by hand |
+
+The backend is imported as the `backend` package, so `uvicorn` has to be started from the
+repository root, not from inside `backend/`.
 
 ### Nothing configured? It still runs
 
-Each dependency degrades on its own, so the full workflow is demonstrable offline:
+Each dependency degrades on its own, so the full workflow is demonstrable offline with an empty
+`.env`:
 
 | Missing | Behaviour |
 | --- | --- |
