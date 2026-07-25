@@ -9,3 +9,5 @@ backend/.oauth/
 public/
 .vercel/
 .DS_Store
+.vercel
+.env*
