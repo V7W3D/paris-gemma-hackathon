@@ -82,7 +82,7 @@ export default function App() {
 
   return (
     <div
-      className={`app${collapsed ? ' app--collapsed' : ''}${resizing ? ' app--resizing' : ''}`}
+      className={`app${collapsed ? ' app--collapsed' : ''}`}
       style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
     >
       <HistorySidebar
