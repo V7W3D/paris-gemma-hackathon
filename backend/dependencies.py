@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-
 from fastapi import Request
 
 from backend.config import Settings, get_settings
@@ -11,20 +9,16 @@ from backend.services.agent.context_agent import ContextAgent
 from backend.services.agent.direct_agent import DirectAgent
 from backend.services.agent.llm_client import Inference
 from backend.services.agent.verifier_agent import VerifierAgent
-from backend.services.retrieval.alien_client import AlienRetriever, RetrievalUnavailableError
 from backend.services.workflow.claim_verification import ClaimVerificationWorkflow
-
-logger = logging.getLogger(__name__)
 
 
 class AppContainer:
-    """Wires the two agents, the Alien MCP retriever and the store together."""
+    """Wires the agents and store together."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.database = Database(self.settings)
         self.inference = Inference(self.settings)
-        self.retriever = AlienRetriever(self.settings)
         self.store: Store = self.database.store
         self.context_agent = ContextAgent(self.inference, self.store, self.settings)
         self.verifier = VerifierAgent(self.inference, self.settings)
@@ -36,7 +30,6 @@ class AppContainer:
             verifier=self.verifier,
             context_agent=self.context_agent,
             direct_agent=self.direct_agent,
-            retriever=self.retriever,
             store=self.store,
             settings=self.settings,
         )
@@ -45,13 +38,7 @@ class AppContainer:
         self.store = await self.database.connect()
         self.context_agent = ContextAgent(self.inference, self.store, self.settings)
         self.workflow = self._build_workflow()
-        try:
-            await self.retriever.connect()
-        except RetrievalUnavailableError as exc:
-            logger.warning("%s; gathering will return no evidence", exc)
-
     async def shutdown(self) -> None:
-        await self.retriever.aclose()
         await self.inference.aclose()
         await self.database.close()
 
@@ -60,10 +47,6 @@ class AppContainer:
             "mongo_connected": self.database.connected,
             "llm_mocked": self.inference.mocked,
             "llm_model": self.settings.brev_model,
-            "search_mocked": self.retriever.mocked,
-            "alien_endpoint": self.retriever.endpoint,
-            "alien_search_tool": self.retriever.search_tool,
-            "alien_tools": self.retriever.tool_names,
         }
 
 

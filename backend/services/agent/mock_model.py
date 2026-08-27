@@ -84,18 +84,6 @@ def _plan(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
     }
 
 
-def _gather(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
-    claims = context.get("claims", [])
-    budget = context.get("searches_left", 0)
-    if budget <= 0 or context.get("evidence") or not claims:
-        return {"thought": "the evidence collected is enough", "queries": [], "done": True}
-    return {
-        "thought": "searching the corpus for the first claim",
-        "queries": [claims[0]["text"]],
-        "done": False,
-    }
-
-
 def _assess(context: dict[str, Any], _prompt: str) -> dict[str, Any]:
     evidence_ids = [item["id"] for item in context.get("evidence", [])]
     return {
@@ -169,7 +157,6 @@ def _direct(_context: dict[str, Any], prompt: str) -> dict[str, Any]:
 _HANDLERS: dict[str, Callable[[dict[str, Any], str], dict[str, Any]]] = {
     "DecomposeOutput": _decompose,
     "PlanOutput": _plan,
-    "GatherOutput": _gather,
     "AssessOutput": _assess,
     "VerdictOutput": _verdict,
     "CompactionOutput": _compaction,

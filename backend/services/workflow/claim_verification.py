@@ -11,7 +11,6 @@ from backend.models.schemas.chat import Conversation, Message, Role, TraceStep
 from backend.models.schemas.context import (
     ContextObject,
     Decision,
-    Retrieval,
     Stage,
     Verdict,
     VerdictLabel,
@@ -19,10 +18,8 @@ from backend.models.schemas.context import (
 from backend.services.agent.context_agent import ContextAgent
 from backend.services.agent.direct_agent import DirectAgent
 from backend.services.agent.verifier_agent import VerifierAgent
-from backend.services.retrieval.alien_client import AlienRetriever, RetrievalError
 
 logger = logging.getLogger(__name__)
-
 Event = dict[str, Any]
 
 DEFAULT_TITLE = "New verification"
@@ -36,12 +33,10 @@ class ConversationNotFound(LookupError):
 
 
 class ClaimVerificationWorkflow:
-    """Drives one user turn through the five decision points.
+    """Drives one user turn through the claim verification decision points.
 
-    At every point the context agent assembles the context, the verifier agent
-    decides, the orchestrator runs any searches the verifier asked for against
-    the Alien corpus, and the context agent folds the outcome back into a new
-    context revision.
+    At every point the context agent assembles the context and the verifier
+    agent decides, with no external retrieval dependency.
 
     A turn can also be run with the verifier switched off, which skips all of
     that and hands the message to the direct agent instead.
@@ -53,14 +48,12 @@ class ClaimVerificationWorkflow:
         verifier: VerifierAgent,
         context_agent: ContextAgent,
         direct_agent: DirectAgent,
-        retriever: AlienRetriever,
         store: Store,
         settings: Settings,
     ) -> None:
         self._verifier = verifier
         self._context = context_agent
         self._direct = direct_agent
-        self._retriever = retriever
         self._store = store
         self._settings = settings
 
@@ -151,20 +144,12 @@ class ClaimVerificationWorkflow:
         for event in events:
             yield event
 
-        # 3. GATHER (loop until the verifier is satisfied or the budget runs out)
-        for _ in range(self._settings.max_gather_steps):
-            context, decision, events = await self._step(context, Stage.GATHER, trace)
-            for event in events:
-                yield event
-            if decision.done or not decision.queries or context.searches_used >= context.search_budget:
-                break
-
-        # 4. ASSESS
+        # 3. ASSESS
         context, _, events = await self._step(context, Stage.ASSESS, trace)
         for event in events:
             yield event
 
-        # 5. VERDICT
+        # 4. VERDICT
         context, _, events = await self._step(context, Stage.VERDICT, trace)
         for event in events:
             yield event
@@ -201,49 +186,21 @@ class ClaimVerificationWorkflow:
         stage: Stage,
         trace: list[TraceStep],
     ) -> tuple[ContextObject, Decision, list[Event]]:
-        """One decision point: decide, run any searches asked for, commit."""
+        """Run one decision point and commit the verifier's decision."""
         context = self._context.advance(context, stage)
 
         events: list[Event] = [{"type": "stage", "stage": stage.value, "status": "started"}]
 
         decision = await self._verifier.run(context=context)
-        retrievals = (
-            await self._search(decision.queries, context) if stage is Stage.GATHER else []
-        )
-
         context = await self._context.commit(
-            context=context, decision=decision, retrievals=retrievals
+            context=context, decision=decision
         )
-
-        for retrieval in retrievals:
-            events.append(
-                {
-                    "type": "retrieval",
-                    "stage": stage.value,
-                    "query": retrieval.query,
-                    "ok": retrieval.ok,
-                    "error": retrieval.error,
-                    "evidence": [
-                        e.model_dump(mode="json")
-                        for e in context.evidence
-                        if e.id in retrieval.evidence_ids
-                    ],
-                }
-            )
 
         trace.append(
             TraceStep(
                 stage=stage,
                 summary=decision.summary,
-                retrievals=[
-                    {
-                        "query": r.query,
-                        "ok": r.ok,
-                        "error": r.error,
-                        "evidence_count": len(r.evidence_ids),
-                    }
-                    for r in retrievals
-                ],
+                retrievals=[],
             )
         )
 
@@ -257,23 +214,6 @@ class ClaimVerificationWorkflow:
             }
         )
         return context, decision, events
-
-    async def _search(self, queries: list[str], context: ContextObject) -> list[Retrieval]:
-        """Run the verifier's queries, capped by what is left of the search budget."""
-        budget = max(context.search_budget - context.searches_used, 0)
-        retrievals: list[Retrieval] = []
-
-        for query in queries[:budget]:
-            try:
-                chunks = await self._retriever.search(query)
-            except RetrievalError as exc:
-                retrievals.append(Retrieval(query=query, ok=False, error=str(exc)))
-                continue
-            retrievals.append(Retrieval(query=query, chunks=chunks))
-
-        if len(queries) > budget:
-            logger.info("Dropped %d queries over the search budget", len(queries) - budget)
-        return retrievals
 
     async def _reveal(self, text: str) -> AsyncIterator[Event]:
         """Push the final answer out in chunks so the UI can render it as it lands."""
@@ -326,8 +266,6 @@ def _stage_detail(stage: Stage, context: ContextObject) -> dict[str, Any]:
         return {"claims": [c.text for c in context.claims]}
     if stage is Stage.PLAN:
         return {"open_questions": context.open_questions[-4:]}
-    if stage is Stage.GATHER:
-        return {"evidence_count": len(context.evidence)}
     if stage is Stage.ASSESS:
         return {
             "statuses": [

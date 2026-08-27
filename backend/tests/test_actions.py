@@ -5,7 +5,6 @@ import pytest
 from backend.models.schemas.actions import (
     AssessOutput,
     DecomposeOutput,
-    GatherOutput,
     VerdictOutput,
     extract_json_object,
     salvage_output,
@@ -40,17 +39,6 @@ def test_salvage_output_builds_the_stage_model():
 def test_decompose_accepts_objects_instead_of_strings():
     output = DecomposeOutput.model_validate({"claims": [{"text": "a claim"}, "another"]})
     assert output.claims == ["a claim", "another"]
-
-
-def test_gather_defaults_to_no_queries():
-    output = GatherOutput.model_validate({"thought": "done"})
-    assert output.queries == []
-    assert output.done is False
-
-
-def test_gather_accepts_objects_instead_of_query_strings():
-    output = GatherOutput.model_validate({"queries": [{"query": "a query"}, "another"]})
-    assert output.queries == ["a query", "another"]
 
 
 def test_assessment_falls_back_to_insufficient_on_an_unknown_status():

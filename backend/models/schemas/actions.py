@@ -54,25 +54,6 @@ class PlanOutput(StageOutput):
     )
 
 
-class GatherOutput(StageOutput):
-    """The searches to run next, or the decision to stop gathering."""
-
-    queries: list[str] = Field(
-        default_factory=list,
-        description="Searches to run against the corpus. Empty when no more are needed.",
-    )
-    done: bool = Field(
-        default=False, description="True when the evidence collected is enough to judge."
-    )
-
-    @field_validator("queries", mode="before")
-    @classmethod
-    def _flatten(cls, value: Any) -> Any:
-        if isinstance(value, list):
-            return [item.get("query", "") if isinstance(item, dict) else item for item in value]
-        return value
-
-
 class ClaimAssessment(BaseModel):
     claim_id: str = Field(description="Id of the claim from the context object.")
     status: ClaimStatus = Field(description="supported, refuted or insufficient.")
@@ -139,7 +120,6 @@ class DirectAnswerOutput(StageOutput):
 STAGE_OUTPUTS: dict[Stage, type[StageOutput]] = {
     Stage.DECOMPOSE: DecomposeOutput,
     Stage.PLAN: PlanOutput,
-    Stage.GATHER: GatherOutput,
     Stage.ASSESS: AssessOutput,
     Stage.VERDICT: VerdictOutput,
 }

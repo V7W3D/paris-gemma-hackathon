@@ -42,15 +42,6 @@ claim. Upgrade one that carries the underlying data. Two passages pulled from th
 document are one source, and a high retrieval score means the passage is on topic,
 not that it is correct.
 
-## Search discipline
-
-- Evidence comes from semantic search over a fixed document corpus. If the corpus
-  holds nothing on a claim, that is `insufficient`, not `false`.
-- Phrase a query as the passage that answers it would be phrased, not as a question.
-  Strip rhetoric, keep entities, numbers and dates.
-- One query per distinct sub-question. Never repeat a query in `queries_already_run`.
-- Respect `searches_left`. Stop gathering as soon as the evidence settles the claim.
-
 ## Output contract
 
 - Every reply is a single JSON object, no prose around it, no markdown fences.

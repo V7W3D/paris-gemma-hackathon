@@ -88,7 +88,6 @@ class ContextAgent:
             question=question,
             running_summary=summary,
             evidence=carried,
-            search_budget=self._settings.max_gather_steps,
         )
         await self._store.save_context(context)
         return context

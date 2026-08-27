@@ -16,9 +16,8 @@ You work one decision point at a time. A separate Context agent gives you the co
 object below, which holds everything you are allowed to reason from.
 
 Hard rules:
-- Never invent sources, titles, quotes or dates. Only cite evidence present in the context.
-- Evidence comes from semantic search over a private document corpus, not the open web.
-- If the evidence is thin, say so instead of guessing."""
+- Do not invent sources, titles, quotes or dates.
+- If the available context is thin, say so instead of guessing."""
 
 CONTEXT_ROLE = """You are the Context agent of a claim-verification system.
 You do not answer the user and you do not decide anything about the claims. You keep the
@@ -40,16 +39,8 @@ STAGE_INSTRUCTIONS: dict[Stage, str] = {
 Keep at most {max_claims} claims, drop rhetoric and opinion, and resolve pronouns using the running summary.
 If the message contains no checkable factual claim (a greeting, small talk, a meta question),
 return an empty claim list and put a short direct answer in "reply" instead.""",
-    Stage.PLAN: """For each claim, state what evidence would settle it, and write the search queries you would run.
-Reference claims by the ids given in the context object.
-Queries must be specific, phrased the way a source would phrase it, and free of hedging words.""",
-    Stage.GATHER: """Write the searches to run next against the document corpus.
-Each query is matched semantically against passages, so phrase it as the passage that would
-answer it would be phrased, not as a question or a keyword soup.
-Ask for a query only if it adds something the current evidence does not already cover, and
-never repeat anything in queries_already_run.
-Return an empty queries list with done=true as soon as the evidence is sufficient,
-or when searches_left reaches zero.""",
+    Stage.PLAN: """For each claim, state what information would settle it.
+Reference claims by the ids given in the context object.""",
     Stage.ASSESS: """Judge every claim in the context against the evidence in the context, and nothing else.
 Use "supported" when credible evidence confirms it, "refuted" when credible evidence contradicts it,
 and "insufficient" when the evidence is missing, off-topic or conflicting.

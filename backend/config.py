@@ -38,19 +38,8 @@ class Settings(BaseSettings):
     mongodb_db: str = "claim_verifier"
     mongodb_timeout_ms: int = 2000
 
-    alien_mcp_url: str = ""
-    alien_mcp_token: str = ""
-    alien_mcp_oauth: bool = False
-    alien_oauth_callback_port: int = 8765
-    alien_mcp_search_tool: str = ""
-    alien_dataset_ids: list[int] = []
-    alien_search_limit: int = 8
-    alien_mcp_timeout_seconds: float = 30.0
-
     mock_llm: bool = False
-    mock_search: bool = False
 
-    max_gather_steps: int = 3
     max_claims: int = 4
     max_evidence_in_context: int = 12
 
@@ -61,18 +50,9 @@ class Settings(BaseSettings):
         return BACKEND_DIR / "memory" / "verifier_memory.md"
 
     @property
-    def alien_oauth_cache(self) -> Path:
-        """Where the OAuth tokens live, so the browser login happens once."""
-        return BACKEND_DIR / ".oauth"
-
-    @property
     def llm_is_mocked(self) -> bool:
         """Mock whenever explicitly asked, or when no Brev endpoint is configured."""
         return self.mock_llm or not self.brev_base_url
-
-    @property
-    def search_is_mocked(self) -> bool:
-        return self.mock_search or not self.alien_mcp_url
 
 
 @lru_cache

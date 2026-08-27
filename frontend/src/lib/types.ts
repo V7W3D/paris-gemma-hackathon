@@ -1,6 +1,6 @@
-export type Stage = 'decompose' | 'plan' | 'gather' | 'assess' | 'verdict'
+export type Stage = 'decompose' | 'plan' | 'assess' | 'verdict'
 
-/** Verified runs the five decision points; direct is one plain model answer. */
+/** Verified runs the four decision points; direct is one plain model answer. */
 export type ChatMode = 'verified' | 'direct'
 
 export type ClaimStatus = 'pending' | 'supported' | 'refuted' | 'insufficient'
@@ -82,10 +82,6 @@ export interface SystemStatus {
   mongo_connected: boolean
   llm_mocked: boolean
   llm_model: string
-  search_mocked: boolean
-  alien_endpoint: string
-  alien_search_tool: string
-  alien_tools: string[]
 }
 
 export type StreamEvent =
@@ -105,12 +101,11 @@ export type StreamEvent =
   | { type: 'error'; error: string }
   | { type: 'done' }
 
-export const STAGES: Stage[] = ['decompose', 'plan', 'gather', 'assess', 'verdict']
+export const STAGES: Stage[] = ['decompose', 'plan', 'assess', 'verdict']
 
 export const STAGE_LABELS: Record<Stage, string> = {
   decompose: 'Decompose claims',
   plan: 'Plan evidence',
-  gather: 'Gather sources',
   assess: 'Assess claims',
   verdict: 'Write verdict',
 }

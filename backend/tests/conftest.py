@@ -8,7 +8,6 @@ from backend.services.agent.context_agent import ContextAgent
 from backend.services.agent.direct_agent import DirectAgent
 from backend.services.agent.llm_client import Inference
 from backend.services.agent.verifier_agent import VerifierAgent
-from backend.services.retrieval.alien_client import AlienRetriever
 from backend.services.workflow.claim_verification import ClaimVerificationWorkflow
 
 
@@ -19,10 +18,7 @@ def settings() -> Settings:
     return Settings(
         _env_file=None,
         mock_llm=True,
-        mock_search=True,
         brev_base_url="",
-        alien_mcp_url="",
-        max_gather_steps=2,
     )
 
 
@@ -52,16 +48,10 @@ def direct_agent(inference: Inference, settings: Settings) -> DirectAgent:
 
 
 @pytest.fixture
-def retriever(settings: Settings) -> AlienRetriever:
-    return AlienRetriever(settings)
-
-
-@pytest.fixture
 def workflow(
     verifier: VerifierAgent,
     context_agent: ContextAgent,
     direct_agent: DirectAgent,
-    retriever: AlienRetriever,
     store: MemoryStore,
     settings: Settings,
 ) -> ClaimVerificationWorkflow:
@@ -69,7 +59,6 @@ def workflow(
         verifier=verifier,
         context_agent=context_agent,
         direct_agent=direct_agent,
-        retriever=retriever,
         store=store,
         settings=settings,
     )

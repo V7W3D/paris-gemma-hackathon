@@ -21,7 +21,6 @@ class Stage(str, Enum):
 
     DECOMPOSE = "decompose"
     PLAN = "plan"
-    GATHER = "gather"
     ASSESS = "assess"
     VERDICT = "verdict"
 
@@ -29,7 +28,6 @@ class Stage(str, Enum):
 STAGE_ORDER: list[Stage] = [
     Stage.DECOMPOSE,
     Stage.PLAN,
-    Stage.GATHER,
     Stage.ASSESS,
     Stage.VERDICT,
 ]
@@ -77,7 +75,7 @@ class Evidence(BaseModel):
 
 
 class Chunk(BaseModel):
-    """A raw hit from the Alien data cluster, before agent 2 admits it as evidence."""
+    """A raw source passage, before agent 2 admits it as evidence."""
 
     title: str = ""
     text: str = ""

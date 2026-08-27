@@ -129,16 +129,8 @@ export function HistorySidebar({
             <span>{status.llm_mocked ? 'Mock inference' : status.llm_model}</span>
           </div>
           <div className="status-row">
-            <span className={`dot${status.search_mocked ? ' dot--hollow' : ''}`} />
-            <span>{status.search_mocked ? 'Mock corpus' : 'Alien MCP'}</span>
-          </div>
-          <div className="status-row">
             <span className={`dot${status.mongo_connected ? '' : ' dot--hollow'}`} />
             <span>{status.mongo_connected ? 'MongoDB' : 'In-memory store'}</span>
-          </div>
-          <div className="status-row">
-            <span className="dot" />
-            <span>Search · {status.alien_search_tool}</span>
           </div>
         </footer>
       )}

@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 STAGE_TEMPERATURE: dict[Stage, float] = {
     Stage.DECOMPOSE: 0.1,
     Stage.PLAN: 0.2,
-    Stage.GATHER: 0.2,
     Stage.ASSESS: 0.1,
     Stage.VERDICT: 0.3,
 }
@@ -74,14 +73,10 @@ class VerifierAgent:
         payload = output.model_dump(mode="json")
         thought = str(payload.pop("thought", ""))
 
-        queries: list[str] = []
-        if context.stage is Stage.GATHER:
-            queries = [str(q).strip() for q in payload.pop("queries", []) or [] if str(q).strip()]
-
         return Decision(
             stage=context.stage,
             summary=thought,
-            queries=queries,
+            queries=[],
             output=payload,
-            done=bool(payload.get("done", True)) and not queries,
+            done=True,
         )
