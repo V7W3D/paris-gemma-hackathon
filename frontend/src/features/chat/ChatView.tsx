@@ -6,9 +6,9 @@ import type { LiveRun } from '@/hooks/useChat'
 import type { Message } from '@/lib/types'
 
 const EXAMPLES = [
-  'The Eiffel Tower is 330 metres tall including its antennas.',
-  'Norway generates more than 95% of its electricity from hydropower.',
-  'The 2024 Paris Olympics had more athletes than the 2020 Tokyo games.',
+  'Mitochondria contain their own circular DNA inherited from ancient bacteria.',
+  'Antibiotic resistance can spread between bacteria through horizontal gene transfer.',
+  'Humans share about 98% of their DNA with chimpanzees.',
 ]
 
 interface Props {
